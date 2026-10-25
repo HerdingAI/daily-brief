@@ -2,15 +2,16 @@
 
 A personal wake-up "podcast digest". An hourly builder picks one new episode from the podcasts and YouTube channels you
 follow, reads its transcript, has Claude turn it into a short two-host conversation (or decide it is not worth your
-morning), voices it, and files the result in a library. At wake-up, the ready episodes are joined into one show and played
-by an alarm. You get a 10 to 20 minute briefing on what matters to you instead of a backlog of ten hours of audio.
+morning), voices it, and files the result in a library. Each morning the ready episodes are joined into one MP3, served
+as a link (`/latest.mp3`) and as a podcast feed (`/feed.xml`). You get a 10 to 20 minute briefing on what matters to you
+instead of a backlog of ten hours of audio. It runs as one Docker container pair; it plays nothing itself.
 
 ## The problem
 
 The podcasts worth following are long: 60 to 120 minutes, mostly conversation, with perhaps ten minutes that matter for
 your work. Nobody has the time, so the queue only grows. Summaries from a chatbot are quick to read but easy to skip.
-What works is audio you do not have to schedule: something that plays while you wake up, short enough to finish, and
-filtered through what you actually care about.
+What works is audio you do not have to schedule: a file waiting in your podcast app when you wake up, short enough to
+finish, and filtered through what you actually care about.
 
 ## Demo
 
@@ -22,14 +23,15 @@ yourself with `bin/voice-demo` (about a cent).
 
 ```mermaid
 flowchart LR
-    F["Feeds<br/>podcast RSS + YouTube"] --> B["Hourly builder<br/>(systemd timer)"]
+    F["Feeds<br/>podcast RSS + YouTube"] --> B["Hourly builder<br/>(container)"]
     B --> T["Transcript<br/>YouTube captions or<br/>faster-whisper on RSS audio"]
     T --> C["ONE Claude call<br/>prompts/episode.md<br/>script JSON or skip"]
     C --> V["Voice: HeyGen Voice 1 Turbo<br/>via OpenRouter<br/>one request per turn"]
     V --> M["Master<br/>ffmpeg loudnorm, MP3"]
     M --> L[("Library<br/>var/library/ + SQLite")]
-    L --> Q["Morning queue<br/>per-segment concat"]
-    Q --> A["Alarm / phone page<br/>mpv player"]
+    L --> Q["Morning assembly<br/>one joined show.mp3"]
+    Q --> A["API: /latest.mp3<br/>/shows/DATE.mp3, /feed.xml"]
+    A --> S["Podcast app<br/>or home automation"]
     W["Watcher (cron)<br/>health checks + alerts"] -.-> B
     W -.-> A
     P["Relevance brief<br/>brief/brief.md"] --> B
@@ -49,10 +51,12 @@ flowchart LR
 5. **Voice.** HeyGen Voice 1 Turbo through OpenRouter, one request per turn, raw 16-bit PCM back. Turns are level-matched,
    joined with short pauses, and the billed cost of each request is read back.
 6. **Master.** ffmpeg loudness-normalises to -16 LUFS and writes an MP3 into `var/library/<item>/`.
-7. **Assemble.** On the first of: the alarm firing, Play on the phone page, or a request for today's show, the ready
-   episodes are concatenated per segment (A, then B) into that day's show, up to `max_segment_minutes`. Episodes built
-   later go to the next morning.
-8. **Play and react.** `mpv` plays the show; the phone page (served by the API) shows what is in it and takes feedback.
+7. **Assemble.** From `[show] assemble_at` (05:00 local by default), or at the first request for today's MP3, the ready
+   episodes are concatenated per segment (A, then B), up to `max_segment_minutes`, and joined into
+   `var/show/<date>/show.mp3`. Episodes built later go to the next morning.
+8. **Serve and react.** The API serves `/latest.mp3`, `/shows/<date>.mp3` and `/feed.xml`. Subscribe to the feed in any
+   podcast app, or point home automation at `/latest.mp3`. The small page at `/` shows what is in the show and takes
+   feedback (more, skip, go deeper).
 
 ## Design decisions
 
@@ -63,7 +67,9 @@ flowchart LR
   tonight failed" backup path. Building one episode takes minutes, so the builder now runs every hour and failure just
   means "try again next hour". Any single hour can fail; the morning does not depend on it.
 - **A library, not a deadline.** Finished episodes wait in the library until a morning claims them. A ready queue is
-  itself the backup: if the builder is down for a day, yesterday's surplus plays.
+  itself the backup: if the builder is down for a day, yesterday's surplus goes into the next show.
+- **It makes the file and stops there.** Playback (alarms, speakers, a phone) is a different problem. The output is a
+  stable URL and a standard podcast feed, so whatever you already use to play audio can consume it.
 - **The spend cap is checked before any LLM call.** Today's billed voice spend plus an estimate for this episode must fit
   under `daily_cap_usd`; if not, the run stops with `capped` before spending a Claude call or a request.
 - **Provider outages are never the episode's fault.** Voice 429/5xx/timeouts/401/402/403 and Claude timeouts, overload
@@ -115,7 +121,8 @@ author uses a subscription, so there is no per-call bill).
 
 ## Reliability design
 
-- The hourly timer is `Persistent=true` with a randomized delay; a missed hour is simply run later.
+- The builder container runs `python -m daily_brief.every`, which starts a fresh build process at each hourly boundary
+  with a run timeout; a failed or hung run is logged and the next hour tries again. Compose restarts a stopped container.
 - Each run records a row (outcome, error, cost) that `/health/show` exposes: last build, failures in a row, queue depth
   and today's spend versus the cap.
 - A cron **watcher** (`ops/watcher/`) polls the health endpoints and alerts through any command you give it. Alerts: Claude
@@ -125,73 +132,80 @@ author uses a subscription, so there is no per-call bill).
   per-feed outcome and `/health/show` reports `feeds_failing` for any feed with no good collect for 24 hours; the
   watcher alerts on it.
 - When every feed fails (no network), the run records an `offline` outcome and makes no Claude or voice calls at all.
-- The alarm has a fallback in both directions: if no podcast show is ready it can start your music bridge instead
-  (optional, see `[alarm_clock]`), and vice versa.
-- Daily upkeep archives each aired show, snapshots the database (feedback, covered-topics ledger, run history) and prunes
+- Daily upkeep archives each assembled show, snapshots the database (feedback, covered-topics ledger, run history) and prunes
   old files.
 - Secrets are read from a file, never logged, never placed in an exception message.
 
 ## Requirements
 
-- Linux with systemd user units (the units and alarm playback are written for a Linux desktop session)
-- Python 3.12+ and [uv](https://docs.astral.sh/uv/)
-- `ffmpeg` and `ffprobe` (mastering); `mpv` (playback)
-- [Claude Code](https://claude.com/claude-code) CLI, logged in, for `claude -p` and `claude setup-token`
-- An [OpenRouter](https://openrouter.ai) API key with a few dollars of credit
-- Optional: `yt-dlp`, used only to list a channel when its RSS feed is down
-- First run downloads the faster-whisper model (`small.en`) from the Hugging Face hub
+- Docker with the Compose plugin (the image bundles Python, ffmpeg, Node, the Claude Code CLI, yt-dlp and the
+  faster-whisper `small.en` model)
+- A Claude login for `claude -p`, either way:
+  - `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` (uses your Claude subscription), or
+  - `ANTHROPIC_API_KEY` (pay per use)
+- An [OpenRouter](https://openrouter.ai) API key with a few dollars of credit, for the voices
+- About 2 GB of disk for the image, plus a few hundred MB a week of audio
 
 ## Quick start
 
 ```sh
 git clone <this repo> daily_brief && cd daily_brief
-uv sync
 
-# 1. config: choose your feeds, voices, caps
+# 1. config: choose your feeds, voices, caps; rewrite the example relevance brief for yourself
 cp config.example.toml config.toml
-$EDITOR config.toml
-$EDITOR brief/brief.md            # the relevance brief: rewrite the example for yourself
+$EDITOR config.toml brief/brief.md
 
-# 2. secrets: a chmod-600 file OUTSIDE the repo (path = [voice] secrets_file)
-mkdir -p ~/.config/daily_brief && umask 077
-claude setup-token                # prints a long-lived token
-cat > ~/.config/daily_brief/secrets.env <<'EOF'
-OPENROUTER_API_KEY=your-openrouter-key
-CLAUDE_CODE_OAUTH_TOKEN=token-from-claude-setup-token
-EOF
-chmod 600 ~/.config/daily_brief/secrets.env
+# 2. secrets: one KEY=value file, mounted read-only into the containers
+touch secrets.env && chmod 600 secrets.env
+$EDITOR secrets.env
+#   OPENROUTER_API_KEY=your-openrouter-key
+#   CLAUDE_CODE_OAUTH_TOKEN=token-from-claude-setup-token      (or ANTHROPIC_API_KEY=...)
 
-# 3. build one episode now (collects feeds, picks one, calls Claude, voices it)
-uv run python -m daily_brief.build config.toml
-
-# 4. run it for real: hourly builder, minute-by-minute alarm tick, phone page/API
-bin/install-units
-loginctl enable-linger "$USER"    # keep the user units running when logged out
+# 3. start the API and the hourly builder
+mkdir -p var
+docker compose up -d
 ```
 
-The API and phone page listen on `http://127.0.0.1:8765` by default (`[api]` in the config). It has no authentication:
-if you want to open it on your phone, bind it to a private network interface or put it behind a VPN or an authenticating
-reverse proxy; do not expose it to the internet. The alarm is off until you set it on the phone page or with
-`PUT /alarm`.
+`brief/brief.md` is baked into the image as the seed brief (later revisions are drafted and approved through the web
+page and live in `var/`), so rebuild with `docker compose up -d --build` after changing it.
+
+If you use `claude setup-token`, run it on any machine where Claude Code is logged in, then paste the token into
+`secrets.env`. Edit that file in place (an editor that saves in place, not one that replaces the file), because compose
+mounts the single file.
+
+The builder runs once when it starts and then at each wall-clock hour, so with working keys the first episode shows up
+within minutes. To build one by hand:
+
+```sh
+docker compose exec builder python -m daily_brief.build /app/config.toml
+```
+
+The API listens on `http://127.0.0.1:8765` (change the port with `BRIEF_PORT` in a `.env` file). It has no
+authentication, so compose publishes it on localhost only. To reach it from a phone, put it behind a VPN or an
+authenticating reverse proxy; do not expose it to the internet. Set `[feed] base_url` to the public URL you use so the
+feed's enclosure links resolve in your podcast app.
 
 Useful commands:
 
 ```sh
-systemctl --user list-timers 'brief-*'
-journalctl --user -u brief-build -n 40 -o cat
 curl -s localhost:8765/health/show | python3 -m json.tool    # queue, last build, spend vs cap
 curl -s localhost:8765/health/llm                             # is Claude logged in, was the token rejected
-systemctl --user start brief-build                            # build one episode now
-bin/audio-qa config.toml var/library/<item_id>                # word error rate of an episode against its script
-bin/check                                                     # tests + lint
+curl -o today.mp3 localhost:8765/latest.mp3                   # today's show, or the newest one
+curl -s localhost:8765/feed.xml                               # the podcast feed
+docker compose logs -f builder                                # the hourly runs
+docker compose --profile test run --rm test                   # the test suite in the image
 ```
+
+Without Docker you can still develop: `uv sync`, `bin/check` (tests and lint), and run the modules directly with a config
+whose paths point at your own directories.
 
 ## Security
 
-- Secrets (`OPENROUTER_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`) live in a **chmod-600 file outside the repo**, named by
-  `[voice] secrets_file`. `.gitignore` also excludes `*.env`, databases and generated audio.
+- Secrets (`OPENROUTER_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`) live in a **chmod-600 `secrets.env`**
+  that is mounted read-only at `/app/secrets.env` (`[voice] secrets_file`). `.gitignore` and `.dockerignore` exclude
+  `*.env`, `config.toml`, databases and generated audio, so none of it enters git or the image.
 - The Claude token is passed to the `claude` subprocess through its environment only, never on a command line.
-- The API has no auth. Keep it on localhost or a private network.
+- The API has no auth. Compose publishes it on `127.0.0.1` only; keep it on localhost or a private network.
 - Transcripts, scripts and episode audio are derived from other people's content. They stay in `var/`, which is not
   tracked; this repository contains none, and you should not publish yours.
 
@@ -202,11 +216,13 @@ bin/check                                                     # tests + lint
 | `daily_brief/build.py` | the hourly builder: pick, transcript, Claude, voice, master, library |
 | `daily_brief/script.py` | validation of the model's script JSON |
 | `daily_brief/voice.py`, `mix.py` | HeyGen via OpenRouter with cost read-back; ffmpeg mastering |
-| `daily_brief/queue.py`, `show.py`, `alarm_*.py` | morning assembly, playback, the alarm |
-| `daily_brief/api.py`, `phone.html` | FastAPI app and the phone page |
+| `daily_brief/queue.py` | morning assembly into one `show.mp3` |
+| `daily_brief/api.py`, `phone.html` | FastAPI app (MP3, feed, health) and the small web page |
+| `daily_brief/every.py` | the builder container's hourly scheduler |
 | `prompts/episode.md` | the one prompt |
 | `brief/brief.md` | an example relevance brief |
-| `systemd/`, `bin/install-units` | user units (with an `@APP_DIR@` placeholder) and their installer |
+| `Dockerfile`, `docker-compose.yml` | one image, services `api` and `builder`, plus a `test` profile |
+| `bin/release` | for a host that deploys from git: tag, test in the image, `up -d`, wait for `/health` |
 | `ops/watcher/` | cron watcher with a pluggable `NOTIFY_CMD` |
 | `demo/script.json`, `bin/voice-demo` | an original two-host script and the tool that voices it |
 | `docs/tts-bakeoff.md` | the TTS measurements |
