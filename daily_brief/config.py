@@ -6,6 +6,7 @@ time instead of at 06:00.
 
 from __future__ import annotations
 
+import datetime as dt
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,23 +29,16 @@ class Paths:
 class Show:
     segments: list[str]
     max_segment_minutes: int         # the queue stops adding episodes to a morning's segment past this
+    min_segment_seconds: int         # a ready episode shorter than this is treated as unplayable
+    assemble_at: dt.time             # local time of day from which the builder assembles today's show
 
 
 @dataclass(frozen=True)
-class AlarmClock:
-    window_minutes: int          # a tick this late after the alarm time still fires it
-    spotify_fade_seconds: int
-    spotify_from_percent: int
-    bridge_url: str
-    bridge_timeout_seconds: int
-
-
-@dataclass(frozen=True)
-class Player:
-    volume: int
-    ipc_socket: Path
-    min_segment_seconds: int
-    seek_step_seconds: int
+class Feed:
+    title: str
+    description: str
+    items: int                       # newest assembled shows listed in /feed.xml
+    base_url: str                    # public URL of this API for enclosure links; "" = derive from the request
 
 
 @dataclass(frozen=True)
@@ -139,6 +133,8 @@ class Mix:
 
 @dataclass(frozen=True)
 class Build:
+    interval_minutes: int            # the builder container starts a build run at every multiple of this (wall clock)
+    run_timeout_minutes: int         # a build run still going after this is killed; the loop goes on
     per_run: int                     # episodes finished per hourly run
     max_attempts: int                # charged failures before an item is set aside
     max_new_per_source_per_day: int  # per creator, so a prolific channel can't crowd out the rest
@@ -179,8 +175,7 @@ class Api:
 class Config:
     paths: Paths
     show: Show
-    alarm_clock: AlarmClock
-    player: Player
+    feed: Feed
     brief: BriefCfg
     collect: Collect
     sources: list[Source]
@@ -213,6 +208,16 @@ def _get(raw: dict, dotted: str, kind: type):
 
 def _path(raw: dict, dotted: str) -> Path:
     return Path(_get(raw, dotted, str)).expanduser()
+
+
+def _hhmm(raw: dict, dotted: str) -> dt.time:
+    value = _get(raw, dotted, str)
+    try:
+        if len(value) != 5:  # fromisoformat also takes "0500" and "05:00:30"
+            raise ValueError(value)
+        return dt.time.fromisoformat(value)
+    except ValueError as e:
+        raise ConfigError(f"{dotted} must be HH:MM (24 h, local time), got {value!r}") from e
 
 
 def _optional_path(raw: dict, dotted: str) -> Path | None:
@@ -261,19 +266,14 @@ def load_config(path: str | Path) -> Config:
         show=Show(
             segments=_get(raw, "show.segments", list),
             max_segment_minutes=_get(raw, "show.max_segment_minutes", int),
+            min_segment_seconds=_get(raw, "show.min_segment_seconds", int),
+            assemble_at=_hhmm(raw, "show.assemble_at"),
         ),
-        alarm_clock=AlarmClock(
-            window_minutes=_get(raw, "alarm_clock.window_minutes", int),
-            spotify_fade_seconds=_get(raw, "alarm_clock.spotify_fade_seconds", int),
-            spotify_from_percent=_get(raw, "alarm_clock.spotify_from_percent", int),
-            bridge_url=_get(raw, "alarm_clock.bridge_url", str),
-            bridge_timeout_seconds=_get(raw, "alarm_clock.bridge_timeout_seconds", int),
-        ),
-        player=Player(
-            volume=_get(raw, "player.volume", int),
-            ipc_socket=_path(raw, "player.ipc_socket"),
-            min_segment_seconds=_get(raw, "player.min_segment_seconds", int),
-            seek_step_seconds=_get(raw, "player.seek_step_seconds", int),
+        feed=Feed(
+            title=_get(raw, "feed.title", str),
+            description=_get(raw, "feed.description", str),
+            items=_get(raw, "feed.items", int),
+            base_url=_get(raw, "feed.base_url", str).rstrip("/"),
         ),
         brief=BriefCfg(
             path=_path(raw, "brief.path"),
@@ -338,6 +338,8 @@ def load_config(path: str | Path) -> Config:
             outro=_optional_path(raw, "mix.outro"),
         ),
         build=Build(
+            interval_minutes=_get(raw, "build.interval_minutes", int),
+            run_timeout_minutes=_get(raw, "build.run_timeout_minutes", int),
             per_run=_get(raw, "build.per_run", int),
             max_attempts=_get(raw, "build.max_attempts", int),
             max_new_per_source_per_day=_get(raw, "build.max_new_per_source_per_day", int),
@@ -368,11 +370,10 @@ def load_config(path: str | Path) -> Config:
 
 
 def _validate(cfg: Config) -> None:
-    ac = cfg.alarm_clock
-    for key, lo, hi in (("window_minutes", 1, 120), ("spotify_fade_seconds", 0, 600),
-                        ("spotify_from_percent", 0, 100), ("bridge_timeout_seconds", 1, 60)):
-        if not lo <= getattr(ac, key) <= hi:
-            raise ConfigError(f"alarm_clock.{key} must be {lo}..{hi}, got {getattr(ac, key)}")
+    if cfg.feed.items < 1:
+        raise ConfigError("feed.items must be >= 1")
+    if cfg.feed.base_url and not cfg.feed.base_url.startswith(("http://", "https://")):
+        raise ConfigError("feed.base_url must be empty or start with http:// or https://")
     bad = [s for s in cfg.show.segments if s not in KNOWN_SEGMENTS]
     if bad or not cfg.show.segments:
         raise ConfigError(f"show.segments must be a non-empty subset of {sorted(KNOWN_SEGMENTS)}, got {bad}")
@@ -388,6 +389,8 @@ def _validate(cfg: Config) -> None:
     if cfg.llm.health_cache_seconds < 0:
         raise ConfigError("llm.health_cache_seconds must be >= 0")
     bd = cfg.build
+    if min(bd.interval_minutes, bd.run_timeout_minutes) < 1:
+        raise ConfigError("build.interval_minutes and build.run_timeout_minutes must be >= 1")
     if min(bd.per_run, bd.max_attempts, bd.max_new_per_source_per_day, bd.max_skips_per_run) < 1:
         raise ConfigError("build.per_run, max_attempts, max_new_per_source_per_day and max_skips_per_run must be >= 1")
     if not 0 < bd.min_minutes < bd.max_minutes:
@@ -424,5 +427,3 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("llm.auth_error_patterns must be a non-empty list of non-empty strings")
     if not all(isinstance(x, str) and x for x in cfg.llm.unavailable_patterns):
         raise ConfigError("llm.unavailable_patterns must be a list of non-empty strings")
-    if not 0 <= cfg.player.volume <= 100:
-        raise ConfigError("player.volume must be 0-100")

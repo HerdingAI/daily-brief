@@ -1,7 +1,0 @@
-[Unit]
-Description=Daily Brief: fire the configured alarm if it is due
-
-[Service]
-Type=oneshot
-WorkingDirectory=@APP_DIR@
-ExecStart=@APP_DIR@/.venv/bin/python -m daily_brief.alarm_tick @APP_DIR@/config.toml

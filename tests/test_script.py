@@ -115,7 +115,7 @@ def test_a_dollar_sign_percent_and_apostrophes_are_fine():
 
 
 def test_rules_from_config():
-    b = Build(per_run=1, max_attempts=2, max_new_per_source_per_day=1, max_skips_per_run=2, min_minutes=4,
+    b = Build(interval_minutes=60, run_timeout_minutes=90, per_run=1, max_attempts=2, max_new_per_source_per_day=1, max_skips_per_run=2, min_minutes=4,
               max_minutes=20, max_share_of_source=0.4, max_over=0.15, words_per_minute=150, chars_per_word=6, max_turn_words=90,
               max_same_speaker_run=3, hype_words=["insane"], history_days=30)
     r = script.Rules.from_config(b, {"p1", "p2"})

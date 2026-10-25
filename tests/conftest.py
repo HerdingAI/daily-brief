@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-PROTECTED = [Path.home() / ".local" / "share" / "daily_brief" / "archive", Path.home() / ".local" / "share" / "daily_brief" / "var"]
+PROTECTED = [Path("/archive/daily_brief"), Path.home() / ".local" / "share" / "daily_brief" / "archive",
+             Path.home() / ".local" / "share" / "daily_brief" / "var"]
 
 
 def _snapshot() -> dict[str, float]:
@@ -42,10 +43,10 @@ def write_config(tmp_path: Path, replace: dict[str, str] | None = None) -> Path:
     """The repo config.example.toml with every runtime/archive path redirected into tmp_path, plus optional text replacements
     (each old string must exist, so a renamed key fails the test instead of silently testing nothing)."""
     text = (REPO / "config.example.toml").read_text()
-    text = text.replace("~/.local/share/daily_brief/var", str(tmp_path / "var"))
-    text = text.replace("~/.local/share/daily_brief/archive", str(tmp_path / "archive"))
-    text = text.replace("~/.config/daily_brief/secrets.env", str(tmp_path / "secrets.env"))  # tests write tokens here
-    text = text.replace('path = "brief/brief.md"', f'path = "{REPO / "brief" / "brief.md"}"')
+    text = text.replace("/app/var", str(tmp_path / "var"))
+    text = text.replace("/archive/daily_brief", str(tmp_path / "archive"))
+    text = text.replace("/app/secrets.env", str(tmp_path / "secrets.env"))  # tests write tokens here
+    text = text.replace('"/app/brief/brief.md"', f'"{REPO / "brief" / "brief.md"}"')
     for old, new in (replace or {}).items():
         assert old in text, old
         text = text.replace(old, new)

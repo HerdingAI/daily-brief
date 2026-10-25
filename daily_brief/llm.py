@@ -41,7 +41,7 @@ def is_auth_error(text: str, patterns: Sequence[str]) -> bool:
 def claude_runner(command: str, args: list[str], model: str, timeout_s: int,
                   env: dict[str, str] | None = None, auth_patterns: Sequence[str] = (),
                   unavailable_patterns: Sequence[str] = ()) -> Runner:
-    """env adds to the inherited environment (e.g. CLAUDE_CODE_OAUTH_TOKEN, since a systemd user unit has
+    """env adds to the inherited environment (e.g. CLAUDE_CODE_OAUTH_TOKEN, since a container has
     no login session). auth_patterns ride on the runner so call_json can classify a login failure."""
     cmd = [str(Path(command).expanduser()), *args, *(["--model", model] if model else [])]
 

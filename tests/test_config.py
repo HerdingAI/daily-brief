@@ -21,12 +21,6 @@ def test_repo_config_loads_and_is_typed():
     assert "~" not in str(cfg.paths.var_dir)  # user paths are expanded
 
 
-def test_volume_range(tmp_path):
-    body = REPO_CONFIG.read_text().replace("volume = 70", "volume = 150")
-    with pytest.raises(ConfigError, match="player.volume"):
-        load_config(write(tmp_path, body))
-
-
 def test_unknown_segment_rejected(tmp_path):
     body = REPO_CONFIG.read_text().replace('segments = ["A", "B"]', 'segments = ["A", "Z"]')
     with pytest.raises(ConfigError, match="show.segments"):
@@ -34,8 +28,8 @@ def test_unknown_segment_rejected(tmp_path):
 
 
 def test_bool_is_not_a_number(tmp_path):
-    body = REPO_CONFIG.read_text().replace("volume = 70", "volume = true")
-    with pytest.raises(ConfigError, match="player.volume"):
+    body = REPO_CONFIG.read_text().replace("min_segment_seconds = 60", "min_segment_seconds = true")
+    with pytest.raises(ConfigError, match="show.min_segment_seconds"):
         load_config(write(tmp_path, body))
 
 
@@ -74,24 +68,6 @@ def test_youtube_is_transcript_only_by_default():
 
 def test_transcript_api_timeout_is_configured():
     assert 0 < load_config(REPO_CONFIG).youtube.transcript_timeout_seconds <= 120
-
-
-def test_alarm_clock_defaults_load():
-    cfg = load_config(REPO_CONFIG)
-    assert cfg.alarm_clock.window_minutes == 10
-    assert cfg.alarm_clock.spotify_fade_seconds == 120
-    assert cfg.alarm_clock.spotify_from_percent == 10
-    assert cfg.alarm_clock.bridge_url == "http://127.0.0.1:8766"
-    assert cfg.alarm_clock.bridge_timeout_seconds == 10
-
-
-@pytest.mark.parametrize("key,bad", [("window_minutes", 0), ("window_minutes", 500),
-                                      ("spotify_from_percent", 101), ("spotify_fade_seconds", -1)])
-def test_alarm_clock_rejects_out_of_range(tmp_path, key, bad):
-    import re
-    body = re.sub(rf"(?m)^{key} = \S+", f"{key} = {bad}", REPO_CONFIG.read_text(), count=1)
-    with pytest.raises(ConfigError, match=f"alarm_clock.{key}"):
-        load_config(write(tmp_path, body))
 
 
 def test_heygen_defaults_and_cap_load():
@@ -166,12 +142,12 @@ def test_queue_validation_names_the_key(tmp_path, old, new, key):
         load_config(write(tmp_path, REPO_CONFIG.read_text().replace(old, new, 1)))
 
 
-def test_dead_music_alarm_and_window_config_is_gone():
+def test_dead_music_alarm_player_and_window_config_is_gone():
     text = REPO_CONFIG.read_text()
     assert "[alarm]" not in text and "music_src" not in text
     for key in ("cache_minutes", "fade_in_seconds", "min_track_seconds", "no_repeat_days", 'start = "06:00"', "08:00"):
         assert key not in text
-    assert "[alarm_clock]" in text      # the configurable alarm stays
+    assert "[alarm_clock]" not in text and "[player]" not in text   # playback left the project in v3
 
 
 def test_write_config_keeps_every_written_path_under_tmp_path(tmp_path):
@@ -180,7 +156,7 @@ def test_write_config_keeps_every_written_path_under_tmp_path(tmp_path):
     from tests.conftest import write_config
     cfg = load_config(write_config(tmp_path))
     written = {"paths.var_dir": cfg.paths.var_dir, "paths.archive_dir": cfg.paths.archive_dir,
-               "voice.secrets_file": cfg.voice.secrets_file, "player.ipc_socket": cfg.player.ipc_socket}
+               "voice.secrets_file": cfg.voice.secrets_file}
     for name, path in written.items():
         assert path.is_relative_to(tmp_path), f"{name} = {path} escapes tmp_path"
     # and nothing else in the written config text names the real home (the executables are the allowed exceptions)
@@ -188,3 +164,28 @@ def test_write_config_keeps_every_written_path_under_tmp_path(tmp_path):
     stray = [ln for ln in text.splitlines() if "\"~/" in ln
              and "~/.local/bin/" not in ln]
     assert not stray, stray
+
+
+def test_assemble_at_is_a_local_hhmm(tmp_path):
+    from datetime import time
+    assert load_config(REPO_CONFIG).show.assemble_at == time(5, 0)
+    for bad in ("5am", "25:00", ""):
+        body = REPO_CONFIG.read_text().replace('assemble_at = "05:00"', f'assemble_at = "{bad}"')
+        with pytest.raises(ConfigError, match=r"show\.assemble_at"):
+            load_config(write(tmp_path, body))
+
+
+def test_build_schedule_defaults_and_validation(tmp_path):
+    b = load_config(REPO_CONFIG).build
+    assert (b.interval_minutes, b.run_timeout_minutes) == (60, 90)
+    body = REPO_CONFIG.read_text().replace("interval_minutes = 60 ", "interval_minutes = 0 ")
+    with pytest.raises(ConfigError, match=r"build\.interval_minutes"):
+        load_config(write(tmp_path, body))
+
+
+def test_repo_config_uses_container_paths():
+    cfg = load_config(REPO_CONFIG)
+    assert (str(cfg.paths.var_dir), str(cfg.paths.archive_dir)) == ("/app/var", "/archive/daily_brief")
+    assert (str(cfg.youtube.ytdlp), str(cfg.llm.command), str(cfg.voice.secrets_file)) == (
+        "yt-dlp", "claude", "/app/secrets.env")
+    assert str(cfg.brief.path) == "/app/brief/brief.md"

@@ -14,7 +14,7 @@ SEED = (REPO / "brief" / "brief.md").read_text()
 @pytest.fixture
 def env(tmp_path):
     cfg = load_config(write_config(tmp_path))
-    return cfg, TestClient(api.create_app(cfg, player=object(), today=lambda: "2026-09-27"))
+    return cfg, TestClient(api.create_app(cfg, today=lambda: "2026-09-27"))
 
 
 def draft(version=1, extra_ignore="sports"):
@@ -43,7 +43,7 @@ def test_draft_approve_cycle(env):
 
 def test_invalid_draft_rejected_with_reason(tmp_path):
     cfg = load_config(write_config(tmp_path, {"tv_forbidden_terms = []": 'tv_forbidden_terms = ["health"]'}))
-    c = TestClient(api.create_app(cfg, player=object(), today=lambda: "2026-09-27"))
+    c = TestClient(api.create_app(cfg, today=lambda: "2026-09-27"))
     r = c.post("/brief/draft", json={"text": draft(extra_ignore="health tips")})  # tv_safe leak
     assert r.status_code == 422 and "personal terms" in r.json()["detail"]
 

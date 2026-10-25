@@ -211,7 +211,7 @@ def test_a_corrupt_library_file_is_skipped_marked_bad_and_never_probed_again(env
 def test_a_too_short_file_counts_as_corrupt(env):
     cfg, conn = env
     add_episode(conn, cfg, 1, "A")
-    short = cfg.player.min_segment_seconds - 1
+    short = cfg.show.min_segment_seconds - 1
     assert assemble(conn, cfg, probe=lambda p: short) == {}
     assert conn.execute("select status from episodes").fetchone() == ("bad",)
 
@@ -301,7 +301,7 @@ def test_assembled_day_serves_feedback_today_and_library(env):
     cfg, conn = env
     add_episode(conn, cfg, 1, "A")
     assemble(conn, cfg)
-    c = TestClient(api.create_app(cfg, today=lambda: DATE, launcher=lambda p: None))
+    c = TestClient(api.create_app(cfg, today=lambda: DATE))
     seg = c.get("/today").json()["segments"]["A"]
     assert [k["cluster_id"] for k in seg["kept"]] == ["k1", "k2"] and seg["kept"][0]["role"] == "headline"
     assert seg["title"] == "Episode 1" and seg["so_what"] == "so what 1" and seg["cut"] == []
@@ -389,3 +389,37 @@ def test_a_healthy_day_costs_no_write_on_repeat(env):
     first = assemble(conn, cfg)
     changes = conn.total_changes
     assert assemble(conn, cfg) == first and conn.total_changes == changes
+
+
+def test_assemble_joins_the_segments_into_one_daily_file(env):
+    cfg, conn = env
+    add_episode(conn, cfg, 1, "B")
+    add_episode(conn, cfg, 2, "A")
+    ready = assemble(conn, cfg)
+    show = cfg.paths.var_dir / "show" / DATE
+    assert ready["show"] == "show.mp3" and ready["show_seconds"] == 600.0 and ready["ready_at"]
+    assert (show / "show.mp3").read_bytes() == b"ep2|ep1"          # play order A then B, not insertion order
+    assert json.loads((show / "READY").read_text())["show"] == "show.mp3"
+
+
+def test_daily_file_holds_only_the_segments_that_exist(env):
+    cfg, conn = env
+    add_episode(conn, cfg, 1, "B")
+    assemble(conn, cfg)
+    assert (cfg.paths.var_dir / "show" / DATE / "show.mp3").read_bytes() == b"ep1"
+
+
+def test_failed_daily_join_fails_the_assembly_like_a_failed_cut(env):
+    cfg, conn = env
+    add_episode(conn, cfg, 1, "A")
+
+    def concat(paths, out):
+        if out.name == "show.mp3":
+            raise queue.QueueError("ffmpeg concat failed: disk full")
+        fake_concat(paths, out)
+
+    with pytest.raises(queue.QueueError, match="disk full"):
+        assemble(conn, cfg, concat=concat)
+    assert not (cfg.paths.var_dir / "show" / DATE / "READY").exists()
+    assert assigned(conn) == {1: None} and not conn.in_transaction
+    assert assemble(conn, cfg)["show"] == "show.mp3"                 # the next try works

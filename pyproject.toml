@@ -1,7 +1,7 @@
 [project]
 name = "daily-brief"
 version = "0.1.0"
-description = "Personal morning podcast built from other podcasts: an hourly one-episode builder and a podcast alarm"
+description = "Personal morning podcast built from other podcasts: an hourly one-episode builder, one MP3 a morning and a podcast feed"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

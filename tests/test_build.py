@@ -7,7 +7,7 @@ from types import SimpleNamespace as S
 import numpy as np
 import pytest
 
-from daily_brief import brief, build, collect, db, llm, transcribe, voice
+from daily_brief import brief, build, collect, db, llm, queue, transcribe, voice
 from daily_brief.config import load_config
 from tests.conftest import REPO, write_config
 
@@ -85,7 +85,8 @@ def make_deps(model=None, heygen=None, captions=None, master=fake_master, now=NO
     return build.Deps(runner=model or fake_model(), download=download,
                       make_whisper=lambda: (lambda p: [S(start=0, text="words " * 400)]), now=lambda: now,
                       prompts_dir=REPO / "prompts", fetch=empty_feed, captions=captions or Captions(),
-                      heygen_post=post, heygen_fetch=fetch, sleep=lambda s: None, master=master)
+                      heygen_post=post, heygen_fetch=fetch, sleep=lambda s: None, master=master,
+                      assemble=lambda conn, cfg, date: {})
 
 
 @pytest.fixture
@@ -513,7 +514,7 @@ def test_run_collects_first_and_goes_offline_when_every_feed_is_down(env):
 def test_run_with_nothing_to_do(env):
     meta = build.run_once(env.conn, env.cfg, make_deps())
     assert meta == {"picked": [], "outcome": "no candidates", "cost": 0.0, "results": [],
-                    "feeds_ok": [s.name for s in env.cfg.sources], "feeds_failed": {}}
+                    "assemble": "nothing_ready", "feeds_ok": [s.name for s in env.cfg.sources], "feeds_failed": {}}
 
 
 # ---- main -------------------------------------------------------------------------------------------
@@ -741,3 +742,54 @@ def test_every_feed_failing_means_offline_and_nothing_is_called(env, tmp_path, m
     assert status == "failed" and error.startswith("offline: CollectError: every feed failed") and meta["outcome"] == "offline"
     assert meta["picked"] == [] and model.calls == [] and heygen[0].calls == [] and item_row(env, item)[1] == 0
     assert run_rows(env, "upkeep")  # upkeep still ran
+
+
+# ---- the day's show is assembled at the start of a run, from show.assemble_at on --------------
+
+def _deps_with_assemble(fn, now=NOW):
+    d = make_deps(now=now)
+    d.assemble = fn
+    return d
+
+
+def test_run_assembles_today_first_once_past_assemble_at(env):
+    calls = []
+    meta = build.run_once(env.conn, env.cfg, _deps_with_assemble(lambda c, cfg, date: calls.append(date) or {"show": "x"}))
+    assert calls == [TODAY] and meta["assemble"] == "assembled"
+
+
+def test_run_before_assemble_at_does_not_assemble(env):
+    early = NOW.replace(hour=4, minute=59)
+    meta = build.run_once(env.conn, env.cfg, _deps_with_assemble(lambda *a: pytest.fail("too early"), early))
+    assert meta["assemble"] == "not_yet"
+
+
+def test_run_with_nothing_ready_records_it_and_goes_on(env):
+    meta = build.run_once(env.conn, env.cfg, _deps_with_assemble(lambda *a: {}))
+    assert meta["assemble"] == "nothing_ready" and meta["outcome"] == "no candidates"
+
+
+def test_run_skips_a_day_already_assembled(env):
+    show = env.cfg.paths.var_dir / "show" / TODAY
+    show.mkdir(parents=True)
+    (show / "READY").write_text("{}")
+    meta = build.run_once(env.conn, env.cfg, _deps_with_assemble(lambda *a: pytest.fail("already done")))
+    assert meta["assemble"] == "already"
+
+
+def test_assembly_failure_is_recorded_and_does_not_stop_the_run(env):
+    def boom(*a):
+        raise queue.QueueError("ffmpeg concat failed")
+
+    meta = build.run_once(env.conn, env.cfg, _deps_with_assemble(boom))
+    assert meta["assemble"].startswith("error: QueueError: ffmpeg concat failed") and "outcome" in meta
+
+
+def test_llm_env_passes_the_token_or_an_api_key_and_nothing_else(env):
+    f = env.cfg.voice.secrets_file
+    f.parent.mkdir(parents=True, exist_ok=True)
+    assert build.llm_env(env.cfg) is None
+    f.write_text("OPENROUTER_API_KEY=or\nANTHROPIC_API_KEY=ak\n")
+    assert build.llm_env(env.cfg) == {"ANTHROPIC_API_KEY": "ak"}
+    f.write_text("OPENROUTER_API_KEY=or\nCLAUDE_CODE_OAUTH_TOKEN=tok\n")
+    assert build.llm_env(env.cfg) == {"CLAUDE_CODE_OAUTH_TOKEN": "tok"}

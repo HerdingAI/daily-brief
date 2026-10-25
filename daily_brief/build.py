@@ -18,12 +18,27 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from daily_brief import brief, collect, db, ledger, llm, mix, rank, script, secrets, transcribe, upkeep, voice
+from daily_brief import (
+    brief,
+    collect,
+    db,
+    ledger,
+    llm,
+    mix,
+    queue,
+    rank,
+    script,
+    secrets,
+    transcribe,
+    upkeep,
+    voice,
+)
 from daily_brief.brief import Brief
 from daily_brief.config import Config, load_config
 
 EXIT_AUTH = 75  # EX_TEMPFAIL: Claude is logged out; the run produced nothing and no item is at fault
 TOKEN_KEY = "CLAUDE_CODE_OAUTH_TOKEN"
+CLAUDE_KEYS = (TOKEN_KEY, "ANTHROPIC_API_KEY")  # a subscription token, or an API key for pay-per-use setups
 
 
 @dataclass
@@ -41,6 +56,7 @@ class Deps:
     heygen_fetch: Callable[[str], float | None] | None = None              # None = the real OpenRouter calls
     sleep: Callable[[float], None] = time.sleep
     master: Callable[..., dict] = mix.master_segment
+    assemble: Callable[[sqlite3.Connection, Config, str], dict] = queue.assemble
     _whisper: transcribe.Whisper | None = field(default=None, repr=False)
 
     def whisper(self) -> transcribe.Whisper:
@@ -64,10 +80,10 @@ def make_captions(cfg: Config) -> Callable[[str], str | None]:
 
 
 def llm_env(cfg: Config) -> dict[str, str] | None:
-    """The environment Claude Code runs with: a systemd user unit has no login session, so it authenticates from
-    the long-lived token in the secrets file. None when there is no token (a logged-in desktop session)."""
-    token = secrets.load(cfg.voice.secrets_file).get(TOKEN_KEY)
-    return {TOKEN_KEY: token} if token else None
+    """The environment Claude Code runs with: a container has no login session, so it authenticates from
+    the long-lived token (or API key) in the secrets file. None when there is no token (a logged-in desktop session)."""
+    found = secrets.load(cfg.voice.secrets_file)
+    return {k: found[k] for k in CLAUDE_KEYS if found.get(k)} or None
 
 
 def real_deps(cfg: Config) -> Deps:
@@ -327,7 +343,7 @@ def build_one(conn: sqlite3.Connection, cfg: Config, b: Brief, item_id: int, dep
     try:
         voiced = render_heygen(conn, cfg, date, segment, data["turns"], wav, post, fetch, deps.sleep)
         mx = cfg.mix
-        mastered = deps.master(wav, lib / "episode.mp3", cfg.player.min_segment_seconds, mx.loudness_lufs,
+        mastered = deps.master(wav, lib / "episode.mp3", cfg.show.min_segment_seconds, mx.loudness_lufs,
                                mx.true_peak_db, mx.bitrate, mx.intro, mx.outro)
     except voice.DailyCapReached as e:  # the script was longer than the estimate; try again tomorrow's money
         return base | {"status": "capped", "reason": str(e)}
@@ -360,12 +376,28 @@ def build_one(conn: sqlite3.Connection, cfg: Config, b: Brief, item_id: int, dep
 
 # ---- the hourly run ---------------------------------------------------------------------------------
 
+def assemble_today(conn: sqlite3.Connection, cfg: Config, deps: Deps, now: dt.datetime) -> str:
+    """From show.assemble_at on, make today's show before building more (the morning's MP3 then exists whether or not
+    anyone has asked for it). Never raises: an assembly problem must not stop the builder from building. Returns the
+    outcome for the run meta: not_yet, assembled, already, nothing_ready or `error: ...`."""
+    if now.time() < cfg.show.assemble_at:
+        return "not_yet"
+    date = now.date().isoformat()
+    try:
+        if queue.is_assembled(cfg, date):
+            return "already"
+        return "assembled" if deps.assemble(conn, cfg, date) else "nothing_ready"
+    except Exception as e:  # noqa: BLE001  (QueueError, ffmpeg/OS errors; the next run tries again)
+        return f"error: {type(e).__name__}: {e}"[:300]
+
+
 def run_once(conn: sqlite3.Connection, cfg: Config, deps: Deps) -> dict:
     """Collect, then try candidates until one episode is built. Returns the run's meta for the runs table."""
     now = deps.now()
     specs = [collect.SourceSpec(**s.__dict__) for s in cfg.sources]
     c = cfg.collect
     meta: dict = {"picked": [], "outcome": "no candidates", "cost": 0.0, "results": []}
+    meta["assemble"] = assemble_today(conn, cfg, deps, now)
     try:
         got = collect.collect_all(conn, specs, deps.fetch, now, c.new_window_days, c.min_episode_seconds, deps.listing)
         failed = got["errors"] or {}
@@ -429,7 +461,7 @@ def main(argv: list[str]) -> int:
     code = 0
     try:
         meta = run_once(conn, cfg, real_deps(cfg))
-        # an episode problem is the exit code's business only for systemd (0), but the run is "failed" when nothing
+        # an episode problem is not the exit code's business (0), but the run is "failed" when nothing
         # was built and the last outcome was a failure or the cap: that is what failed_in_a_row and the watcher count
         failure = run_failure(meta)
         db.finish_run(conn, run, "failed" if failure else "ok", error=failure, meta=meta)

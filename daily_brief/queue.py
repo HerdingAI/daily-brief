@@ -1,12 +1,12 @@
 """The morning queue: turn the library of ready episodes into one day's show.
 
 The hourly builder (build.py) leaves finished episodes in var/library/ with an `episodes` row. The first caller
-that needs a date (the alarm, the phone's Play, `show`) assembles it: per segment, the newest ready episodes that
+that needs a date (the builder's clock, the first request for the day's MP3) assembles it: per segment, the newest ready episodes that
 no morning has taken yet, up to show.max_segment_minutes, are joined into var/show/<date>/<seg>.mp3 and listed in
-READY. From there the phone page, TV strip, /library, archive and feedback see the same layout they always did.
+READY, plus the whole morning joined into var/show/<date>/show.mp3 (READY "show"). From there the phone page, TV strip, /library, archive and feedback see the same layout they always did.
 
 Assembly is one SQLite write transaction that also holds the lock while the files are cut, so two callers
-(alarm tick + phone) can't both take the same episodes. READY is written last, inside the transaction; anything
+(builder + API) can't both take the same episodes. READY is written last, inside the transaction; anything
 that fails before it rolls the assignment back and leaves the episodes unassigned.
 """
 
@@ -24,6 +24,9 @@ from daily_brief.config import Config
 
 Concat = Callable[[list[Path], Path], None]
 Probe = Callable[[Path], float | None]
+
+
+SHOW_FILE = "show.mp3"  # the day's joined segments, listed in READY as "show"
 
 
 class QueueError(RuntimeError):
@@ -62,6 +65,10 @@ def _read_ready(var: Path, date: str) -> dict | None:
         return {}
 
 
+def is_assembled(cfg: Config, date: str) -> bool:
+    return _ready_marker(cfg.paths.var_dir, date).exists()
+
+
 def _write_ready(show_dir: Path, data: dict) -> None:
     tmp = show_dir / "READY.tmp"
     tmp.write_text(json.dumps(data, indent=1))
@@ -74,17 +81,17 @@ _EP_SELECT = ("select e.item_id, e.title, e.why, e.chapters, e.so_what, e.path, 
 
 
 def _playable(conn: sqlite3.Connection, cfg: Config, ep: dict, probe: Probe) -> bool:
-    """False for a file ffprobe cannot read or that is shorter than player.min_segment_seconds; such an episode is
+    """False for a file ffprobe cannot read or that is shorter than show.min_segment_seconds; such an episode is
     marked 'bad' (not re-probed, never taken). A probe that cannot run at all (no ffprobe, a hang) is not the
     episode's fault: it is skipped this time and left as it is."""
     try:
         seconds = probe(Path(ep["path"]))
     except (OSError, subprocess.SubprocessError):
         return False
-    if seconds is not None and seconds >= cfg.player.min_segment_seconds:
+    if seconds is not None and seconds >= cfg.show.min_segment_seconds:
         return True
     conn.execute("update episodes set status = 'bad', why = ? where item_id = ?",
-                 (f"unplayable: probe says {seconds}s, minimum {cfg.player.min_segment_seconds}s", ep["item_id"]))
+                 (f"unplayable: probe says {seconds}s, minimum {cfg.show.min_segment_seconds}s", ep["item_id"]))
     return False
 
 
@@ -229,7 +236,7 @@ def _complete(conn: sqlite3.Connection, date: str, ready: dict) -> dict:
 def assemble(conn: sqlite3.Connection, cfg: Config, date: str, concat: Concat = concat_mp3,
              probe: Probe = mix.probe_duration) -> dict:
     """Build `date`'s show from the ready, unassigned episodes. Returns the READY content, or {} when nothing
-    is ready (no READY is written, so the alarm falls back to Spotify). Idempotent: a date that has READY is
+    is ready (no READY is written). Idempotent: a date that has READY is
     returned as it is (after finishing an assignment a crash left half done), and an episode is assigned to
     exactly one date.
 
@@ -279,7 +286,14 @@ def assemble(conn: sqlite3.Connection, cfg: Config, date: str, concat: Concat = 
         if not ready["segments"]:  # every segment failed in a way that names no culprit: keep the bad marks only
             conn.execute("commit")
             return {}
-        _write_ready(show_dir, ready)  # last: until this line nothing above is visible to a player
+        # the one daily file: the segments that made it, in play order. A failed join fails the whole assembly
+        # (rollback, no READY) exactly like a failed cut, so a day never has segment files but no show.mp3
+        show = show_dir / SHOW_FILE
+        concat([show_dir / ready["segments"][seg] for seg in cfg.show.segments if seg in ready["segments"]], show)
+        ready["show"] = show.name
+        ready["show_seconds"] = round(probe(show) or sum(m["seconds"] for m in ready["meta"].values()), 1)
+        ready["ready_at"] = ready_at
+        _write_ready(show_dir, ready)  # last: until this line nothing above is visible to a reader
         wrote_ready = True
         conn.execute("commit")
     except BaseException:

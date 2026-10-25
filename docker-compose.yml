@@ -1,0 +1,53 @@
+# Daily Brief: `docker compose up -d`. Needs ./secrets.env (chmod 600) and ./config.toml next to this file.
+name: daily-brief
+
+x-common: &common
+  image: daily-brief:local
+  user: "1000:1000"
+  init: true
+  restart: unless-stopped
+  environment:
+    TZ: ${TZ:-UTC}
+  volumes:
+    - ./var:/app/var
+    - ./config.toml:/app/config.toml:ro
+    - ./secrets.env:/app/secrets.env:ro
+    - ${ARCHIVE_DIR:-./archive}:/archive   # long-term copy of aired shows; point ARCHIVE_DIR at a bigger disk or share
+    - claude-home:/home/brief/.claude
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: "3"}
+
+services:
+  api:
+    <<: *common
+    build:
+      context: .
+      target: runtime
+    command: ["python", "-m", "daily_brief.api", "/app/config.toml"]
+    ports:
+      - "127.0.0.1:${BRIEF_PORT:-8765}:8765"   # no auth: localhost only; put a VPN or an authenticating proxy in front to reach it elsewhere
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8765/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  builder:
+    <<: *common
+    command: ["python", "-m", "daily_brief.every", "/app/config.toml"]
+
+  # `docker compose --profile test run --rm test`: the test suite in the same image plus dev deps (bin/release does)
+  test:
+    profiles: ["test"]
+    image: daily-brief:test
+    build:
+      context: .
+      target: test
+    user: "1000:1000"
+    environment:
+      TZ: ${TZ:-UTC}
+
+volumes:
+  claude-home:

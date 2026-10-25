@@ -32,14 +32,6 @@
   .sowhat { border-left: 3px solid var(--good); padding-left: 10px; margin-top: 10px; font-size: 15px; }
   .upnext .item { padding: 10px 0 2px; }
   .empty { color: var(--muted); text-align: center; padding: 30px 0; }
-  .bar { position: fixed; left: 0; right: 0; bottom: 0; background: #0f131bee; border-top: 1px solid var(--line);
-         padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); backdrop-filter: blur(8px); }
-  .np { font-size: 13px; color: var(--muted); margin-bottom: 8px; white-space: nowrap; overflow: hidden;
-        text-overflow: ellipsis; }
-  .ctl { display: flex; gap: 8px; }
-  .ctl button { flex: 1; min-height: 48px; border-radius: 12px; border: 0; background: #1c2231;
-                color: var(--text); font-size: 18px; }
-  .ctl button.primary { background: var(--blue); color: #0b0d12; font-weight: 700; }
   .banner { background: #2a2415; border: 1px solid var(--accent); border-radius: 14px; padding: 12px 14px; margin: 8px 0 12px; }
   .banner b { color: var(--accent); }
   .banner pre { white-space: pre-wrap; font-size: 12px; max-height: 50vh; overflow: auto; background: #0f131b;
@@ -48,57 +40,31 @@
   .banner .row { display: flex; gap: 8px; margin-top: 8px; }
   .banner .row button { flex: 1; min-height: 44px; border-radius: 10px; border: 0; font-size: 15px; }
   .ok { background: var(--good); color: #0b0d12; font-weight: 700; } .no { background: #1c2231; color: var(--text); }
-  #seek { width: 100%; margin: 0 0 8px; accent-color: var(--blue); height: 28px; }
   .libday { margin-top: 10px; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
-  .librow { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; min-height: 44px;
-            margin: 6px 0; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: #1c2231;
-            color: var(--text); font-size: 15px; }
+  .librow { display: flex; justify-content: space-between; gap: 8px; min-height: 36px; margin: 4px 0; font-size: 15px; }
   .librow span:last-child { color: var(--muted); white-space: nowrap; }
+  .libday a { color: var(--blue); }
+  #player { width: 100%; margin: 4px 0 8px; }
   .toast { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: #222a3b;
            padding: 8px 14px; border-radius: 10px; font-size: 14px; opacity: 0; transition: opacity .2s; }
   .toast.show { opacity: 1; }
-  .alarm label { margin-right: 10px; white-space: nowrap; }
-  .alarm .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
-  .alarm input[type=time], .alarm select { min-height: 44px; border-radius: 10px; border: 1px solid var(--line);
-                                           background: #1c2231; color: var(--text); font-size: 16px; padding: 0 10px; }
-  .alarm input[type=checkbox] { width: 20px; height: 20px; vertical-align: middle; margin-right: 4px; }
 </style>
 </head>
 <body>
 <h1>Morning Brief</h1>
 <div class="date" id="date">Loading…</div>
+<audio id="player" controls preload="none" src="latest.mp3"></audio>
 <div class="note" id="spend"></div>
 <div id="brief"></div>
-<details class="card" id="libbox"><summary><b>Library</b> · replay a past day</summary><div id="lib"></div></details>
-<details class="card alarm" id="alarm"><summary><b>Alarm</b> · <span id="alarm-next">…</span></summary>
-  <div class="row"><label><input type="checkbox" id="alarm-enabled">On</label>
-    <input type="time" id="alarm-time" value="06:00" aria-label="Alarm time">
-    <select id="alarm-sound" aria-label="Alarm sound"><option value="podcast">Podcast</option><option value="spotify">Spotify</option></select></div>
-  <div class="row" id="alarm-days">
-    <label><input type="checkbox" value="0">Mon</label><label><input type="checkbox" value="1">Tue</label>
-    <label><input type="checkbox" value="2">Wed</label><label><input type="checkbox" value="3">Thu</label>
-    <label><input type="checkbox" value="4">Fri</label><label><input type="checkbox" value="5">Sat</label>
-    <label><input type="checkbox" value="6">Sun</label></div>
-</details>
+<details class="card" id="libbox"><summary><b>Library</b> · past days</summary><div id="lib"></div></details>
 <div id="segments"></div>
 
-<div class="bar">
-  <div class="np" id="np">Not playing</div>
-  <input type="range" id="seek" min="0" max="1000" value="0" aria-label="Position" disabled>
-  <div class="ctl">
-    <button onclick="ctl('rewind')" aria-label="Rewind 30 seconds">⏪</button>
-    <button class="primary" id="pp" onclick="togglePause()" aria-label="Play or pause">▶</button>
-    <button onclick="ctl('forward')" aria-label="Forward 30 seconds">⏩</button>
-    <button onclick="vol(-10)" aria-label="Volume down">−</button>
-    <button onclick="vol(10)" aria-label="Volume up">+</button>
-  </div>
-</div>
 <div class="toast" id="toast"></div>
 
 <script>
 const NAMES = { A: "AI Engineering", B: "Product" };
 const LABELS = { up: "👍", skip_topic: "Skip topic", deeper: "Go deeper" };
-let state = { date: null, paused: false, playing: false, duration: 0, volume: 70, given: new Set() };
+let state = { date: null, given: new Set() };
 
 function toast(msg) {
   const t = document.getElementById("toast");
@@ -116,7 +82,7 @@ async function load() {
   const box = document.getElementById("segments");
   const segs = Object.keys(d.segments).sort();
   if (!segs.length) {
-    // not assembled yet: show what is waiting in the library (the first Play or the alarm builds the morning)
+    // not assembled yet: show what is waiting in the library (the morning is assembled at the configured time, or on the first request for the MP3)
     const up = d.up_next || [];
     box.innerHTML = up.length ? `<div class="card upnext"><div class="seg-title">Up next</div>${up.map(e => `
       <div class="item">
@@ -160,27 +126,6 @@ async function fb(btn, segment, cluster_id, kind) {
   if (r.ok) { btn.classList.add("on"); toast("Noted: " + LABELS[kind]); } else toast("Couldn't save");
 }
 
-async function ctl(action, body) {
-  const r = await fetch("/player/" + action, { method: "POST",
-    headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
-  if (r.status === 409) toast("The show isn't playing"); else if (!r.ok) toast("Player error");
-  return r.ok;
-}
-async function togglePause() {
-  // Play plays (resume, or start the latest ready day); Stop/pause pauses
-  const wasPlay = !(state.playing && !state.paused);
-  if (await ctl(wasPlay ? "play" : "stop")) {
-    setTimeout(poll, 400);
-    if (wasPlay) load().then(loadLibrary);  // Play may have just assembled today: swap "Up next" for the morning
-  }
-}
-async function playDay(date, segment) {
-  const r = await fetch("/player/play", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ date, segment }) });
-  toast(r.ok ? `Playing ${date} · ${NAMES[segment] || segment}` : "Couldn't start that recording");
-  document.getElementById("libbox").open = false;
-  setTimeout(poll, 600);
-}
 async function loadLibrary() {
   const d = await (await fetch("/library")).json();
   const box = document.getElementById("lib");
@@ -189,44 +134,12 @@ async function loadLibrary() {
   box.innerHTML = d.days.map(day => {
     const label = day.date === today ? "Today" : new Date(day.date + "T12:00").toLocaleDateString(undefined,
       { weekday: "short", month: "short", day: "numeric" });
-    return `<div class="libday">${esc(label)}</div>` + day.segments.map(sg =>
-      `<button class="librow" onclick="playDay('${day.date}','${sg.segment}')"><span>${esc(NAMES[sg.segment] || sg.segment)}` +
-      `${sg.title ? " · " + esc(sg.title) : ""}</span><span>${sg.seconds ? fmt(sg.seconds) : ""}</span></button>`).join("");
+    return `<div class="libday"><a href="/shows/${esc(day.date)}.mp3">${esc(label)}</a></div>` + day.segments.map(sg =>
+      `<div class="librow"><span>${esc(NAMES[sg.segment] || sg.segment)}` +
+      `${sg.title ? " · " + esc(sg.title) : ""}</span><span>${sg.seconds ? fmt(sg.seconds) : ""}</span></div>`).join("");
   }).join("");
 }
-async function vol(delta) {
-  state.volume = Math.max(0, Math.min(100, state.volume + delta));
-  if (await ctl("volume", { value: state.volume })) toast("Volume " + state.volume);
-}
-
 function fmt(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
-let seeking = false;
-async function poll() {
-  try {
-    const d = await (await fetch("/now-playing")).json();
-    const el = document.getElementById("np"), bar = document.getElementById("seek"), pp = document.getElementById("pp");
-    state.playing = !!(d.playing && d.entry); state.paused = !!d.paused;
-    pp.textContent = state.playing && !state.paused ? "❚❚" : "▶";
-    if (!state.playing) { el.textContent = "Not playing"; bar.disabled = true; bar.value = 0; return; }
-    const what = d.entry.kind === "segment" ? (NAMES[d.entry.label] || d.entry.label) : d.entry.kind;
-    const dur = d.duration_s || d.entry.seconds || 0;
-    state.duration = dur;
-    el.textContent = `${state.paused ? "❚❚" : "▶"} ${what} · ${fmt(d.position_s)} / ${fmt(dur)}` +
-      (d.date && d.date !== state.date ? ` · ${d.date}` : "");
-    bar.disabled = !dur;
-    if (!seeking && dur) bar.value = Math.round(1000 * (d.position_s || 0) / dur);
-  } catch (e) { /* offline for a moment: keep the last line */ }
-}
-(function wireSeek() {
-  const bar = document.getElementById("seek");
-  bar.addEventListener("input", () => { seeking = true; });
-  bar.addEventListener("change", async () => {
-    const to = (bar.value / 1000) * (state.duration || 0);
-    await ctl("seek", { to_s: Math.max(0, to) });
-    seeking = false; setTimeout(poll, 300);
-  });
-})();
-
 async function loadBrief() {
   const d = await (await fetch("/brief")).json();
   const box = document.getElementById("brief");
@@ -245,25 +158,7 @@ async function decide(action) {
   loadBrief();
 }
 
-load().then(loadLibrary); loadSpend().catch(() => {}); loadBrief(); poll(); setInterval(poll, 3000);
-
-// --- alarm: one alarm (time, weekdays, sound); every change saves at once ---
-const alarmEl = id => document.getElementById(id);
-const alarmDays = () => [...document.querySelectorAll("#alarm-days input")];
-function paintAlarm(a) {
-  alarmEl("alarm-enabled").checked = a.enabled; alarmEl("alarm-time").value = a.time; alarmEl("alarm-sound").value = a.sound;
-  alarmDays().forEach(d => { d.checked = a.days.includes(Number(d.value)); });
-  alarmEl("alarm-next").textContent = a.enabled && a.next_fire ? "next " + a.next_fire.replace("T", " ") : "off";
-}
-async function saveAlarm() {
-  const body = { enabled: alarmEl("alarm-enabled").checked, time: alarmEl("alarm-time").value,
-                 days: alarmDays().filter(d => d.checked).map(d => Number(d.value)), sound: alarmEl("alarm-sound").value };
-  const r = await fetch("/alarm", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  if (r.ok) { paintAlarm(await r.json()); toast("Alarm saved"); }
-  else { toast("Not saved: " + (await r.json().catch(() => ({}))).detail); fetch("/alarm").then(x => x.json()).then(paintAlarm); }
-}
-document.querySelectorAll("#alarm input, #alarm select").forEach(el => el.addEventListener("change", saveAlarm));
-fetch("/alarm").then(r => r.json()).then(paintAlarm).catch(() => {});
+load().then(loadLibrary); loadSpend().catch(() => {}); loadBrief();
 </script>
 </body>
 </html>

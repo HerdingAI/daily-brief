@@ -1,29 +1,25 @@
 # Daily Brief configuration. Every tunable lives here, never as a code constant.
-# Copy to config.toml (the default name every entry point looks for) and edit.
+# Copy to config.toml and edit; docker-compose.yml mounts it at /app/config.toml.
 
 [paths]
-var_dir = "~/.local/share/daily_brief/var"                  # runtime state: db, work files, library, caches
-archive_dir = "~/.local/share/daily_brief/archive"         # long-term copy of aired shows + DB snapshots (any directory, e.g. a mounted share)
+# These are paths inside the container (docker-compose.yml mounts ./var at /app/var and ${ARCHIVE_DIR:-./archive} at /archive).
+var_dir = "/app/var"                                       # runtime state: db, work files, caches
+archive_dir = "/archive/daily_brief"                       # long-term copy of aired shows + DB snapshots
 
 [show]
-segments = ["A", "B"]                                      # play order
+segments = ["A", "B"]                                      # order in the joined episode
 max_segment_minutes = 45                                   # a morning's segment takes episodes until this is full
+min_segment_seconds = 60                                   # a ready episode shorter than this is treated as unplayable
+assemble_at = "05:00"                                      # HH:MM local: from then on the builder assembles today's show (else the first MP3 request does)
 
-[alarm_clock]                                              # the configurable alarm (var/alarm.json), fired by brief-alarm.timer
-window_minutes = 10                                        # a tick this late after the alarm time still fires it
-spotify_fade_seconds = 120                                 # Spotify volume ramp at alarm start
-spotify_from_percent = 10                                  # starting volume of the ramp (% of the volume before)
-bridge_url = "http://127.0.0.1:8766"                       # optional HTTP bridge that starts music (a fallback sound); nothing here needs it unless you set sound = "spotify"
-bridge_timeout_seconds = 10
-
-[player]
-min_segment_seconds = 60                                   # a READY segment shorter than this is treated as missing
-seek_step_seconds = 30          # rewind / fast-forward jump on the TV strip and phone page
-volume = 70                                                # mpv volume 0-100
-ipc_socket = "~/.local/share/daily_brief/var/mpv.sock"
+[feed]                                                     # /feed.xml: the podcast feed of the newest assembled shows
+title = "Daily Brief"
+description = "A morning show built from the podcasts and talks worth hearing, in two hosts' voices."
+items = 14                                                 # newest shows listed
+base_url = ""                                              # public URL of this API (enclosure links); empty = taken from the request
 
 [brief]
-path = "brief/brief.md"
+path = "/app/brief/brief.md"   # the seed baked into the image; approved briefs live in <var_dir>/brief (persisted, writable)
 # a brief marked tv_safe: true must not mention any of these; checked case-insensitively.
 # Put the private tags you never want shown on a shared screen here. Empty = no check.
 tv_forbidden_terms = []
@@ -40,21 +36,21 @@ feed_error_chars = 200         # per-feed error text kept in the run meta
 [transcribe]
 model = "small.en"             # roughly 10x realtime on a modern CPU
 compute_type = "int8"
-cpu_threads = 8
+cpu_threads = 4
 beam_size = 1
 vad_filter = true
 marker_every_seconds = 30      # [mm:ss] markers in the transcript
 max_attempts = 3               # after this many failed transcriptions an item is marked failed for good
 
 [youtube]
-ytdlp = "~/.local/bin/yt-dlp"     # absolute: not on the systemd user PATH
+ytdlp = "yt-dlp"
 listing_limit = 15                # fallback when the channel RSS feed is down: newest N from the /videos tab
 listing_timeout_seconds = 120
 transcript_timeout_seconds = 30  # per request to youtube-transcript-api (the library sets none: a stall would hang the run)
 audio_fallback = false         # transcript only, never download the video. No transcript = retry on a later hourly run
 
 [llm]
-command = "~/.local/bin/claude"   # absolute: systemd user units don't have ~/.local/bin on PATH
+command = "claude"
 args = ["-p", "--output-format", "text"]
 model = ""                        # empty = Claude Code's default model; set e.g. "opus" to pin
 timeout_seconds = 600             # a real episode call takes ~2 min; with no network `claude -p` HANGS until killed,
@@ -80,7 +76,7 @@ price_per_million_chars = 4.0  # billed (measured); an estimate for the cap chec
 daily_cap_usd = 0.15           # no Claude call and no request if today's billed spend + this episode's estimate exceeds it
 cost_readback_attempts = 6     # /generation stats lag the request by a few seconds
 cost_readback_wait_seconds = 5
-secrets_file = "~/.config/daily_brief/secrets.env"   # OPENROUTER_API_KEY=... and CLAUDE_CODE_OAUTH_TOKEN=... (chmod 600)
+secrets_file = "/app/secrets.env"   # OPENROUTER_API_KEY=... and CLAUDE_CODE_OAUTH_TOKEN=... (chmod 600)
 host_a = "weston"              # ALEX: HeyGen voice id
 host_b = "meredith"            # SAM: HeyGen voice id
 gap_seconds = 0.35             # pause after a turn when the same speaker continues
@@ -96,7 +92,9 @@ intro = ""                     # optional sting before each segment (path); empt
 outro = ""
 
 [build]
-# brief-build.timer runs hourly: collect, pick ONE episode, one Claude call (prompts/episode.md), HeyGen, loudness.
+interval_minutes = 60         # daily_brief.every starts a build run at each multiple of this (wall clock)
+run_timeout_minutes = 90       # a run still going after this is killed; the loop goes on
+# each run: collect, pick ONE episode, one Claude call (prompts/episode.md), HeyGen, loudness.
 per_run = 1                    # episodes finished per run
 max_attempts = 2               # charged failures (bad script twice, voice error) before an item is set aside
 max_new_per_source_per_day = 1 # per creator, so a prolific channel (AI Engineer: several talks/day) can't crowd out the rest
@@ -125,7 +123,7 @@ archive_keep_days = 90         # archive retention (~17 MB per segment per day)
 # Podcasts use their RSS feeds (direct MP3s, no bot protection). YouTube only where there is no
 # podcast feed: YouTube returned 403 on audio and 429 on captions in testing.
 [api]
-host = "127.0.0.1"             # no auth: bind to localhost, or put it behind a VPN / reverse proxy with auth
+host = "0.0.0.0"               # inside the container; compose publishes it on 127.0.0.1 only. No auth: keep it that way, or put it behind a VPN / reverse proxy with auth
 port = 8765
 
 # ---- Sources. Segment B: product ----

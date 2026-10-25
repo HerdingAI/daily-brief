@@ -56,5 +56,5 @@ def test_main_without_a_key_fails_cleanly(tmp_path, capsys):
     assert "OPENROUTER_API_KEY" in capsys.readouterr().err
 
 
-def test_demo_floor_is_lower_than_the_players():
-    assert voice_demo.MIN_DEMO_SECONDS < load_config(REPO / "config.example.toml").player.min_segment_seconds
+def test_demo_floor_is_lower_than_the_min_segment():
+    assert voice_demo.MIN_DEMO_SECONDS < load_config(REPO / "config.example.toml").show.min_segment_seconds
