@@ -66,6 +66,9 @@ flowchart LR
   itself the backup: if the builder is down for a day, yesterday's surplus plays.
 - **The spend cap is checked before any LLM call.** Today's billed voice spend plus an estimate for this episode must fit
   under `daily_cap_usd`; if not, the run stops with `capped` before spending a Claude call or a request.
+- **Provider outages are never the episode's fault.** Voice 429/5xx/timeouts/401/402/403 and Claude timeouts, overload
+  or usage limits are not charged to the episode and stop the hour's run (the next hour retries). A validated script is
+  cached in `var/library/<id>/script.json`, so a failed voice step never pays for Claude twice.
 - **A skip is a result, and it is final.** An off-brief episode costs one Claude call and no voice, is stored as
   `skipped`, and is never picked again, so the same unwanted episode cannot burn calls every hour.
 - **Failures are charged, then set aside.** A bad script twice or a voice error charges the item one attempt; after
@@ -121,6 +124,7 @@ author uses a subscription, so there is no per-call bill).
 - A feed that keeps failing never fails a build (the builder just works from the backlog), so each build records a
   per-feed outcome and `/health/show` reports `feeds_failing` for any feed with no good collect for 24 hours; the
   watcher alerts on it.
+- When every feed fails (no network), the run records an `offline` outcome and makes no Claude or voice calls at all.
 - The alarm has a fallback in both directions: if no podcast show is ready it can start your music bridge instead
   (optional, see `[alarm_clock]`), and vice versa.
 - Daily upkeep archives each aired show, snapshots the database (feedback, covered-topics ledger, run history) and prunes

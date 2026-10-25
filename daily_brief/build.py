@@ -75,7 +75,8 @@ def real_deps(cfg: Config) -> Deps:
     return Deps(
         runner=llm.claude_runner(str(cfg.llm.command), cfg.llm.args, cfg.llm.model, cfg.llm.timeout_seconds,
                                  env=llm_env(cfg),
-                                 auth_patterns=cfg.llm.auth_error_patterns),
+                                 auth_patterns=cfg.llm.auth_error_patterns,
+                                 unavailable_patterns=cfg.llm.unavailable_patterns),
         download=functools.partial(transcribe.download_any, timeout_s=cfg.collect.http_timeout_seconds * 5,
                                    user_agent=cfg.collect.user_agent, ytdlp=str(y.ytdlp)),
         make_whisper=lambda: transcribe.make_whisper(t.model, t.compute_type, t.cpu_threads, t.beam_size,
@@ -233,6 +234,20 @@ def _write_json(path: Path, data: dict) -> None:
     tmp.replace(path)
 
 
+def _cached_script(path: Path, rules: script.Rules) -> tuple[dict, dict] | None:
+    """(script, llm meta) from a script.json left by an earlier failed voice/master step, or None when it is
+    missing, unparsable, a skip, or no longer valid under today's rules (then Claude is called afresh)."""
+    try:
+        c = json.loads(path.read_text())
+        data, meta = c["script"], c["llm"]
+        if data.get("skip") is True:
+            return None
+        script.validate(data, rules)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):  # ValueError covers bad JSON and rejections
+        return None
+    return data, meta
+
+
 def build_one(conn: sqlite3.Connection, cfg: Config, b: Brief, item_id: int, deps: Deps) -> dict:
     """One item -> status ready | skipped | deferred | capped | failed (plus detail). LLMAuthError propagates:
     a logged-out Claude is nobody's fault but the login, so nothing is charged and the run stops."""
@@ -279,15 +294,25 @@ def build_one(conn: sqlite3.Connection, cfg: Config, b: Brief, item_id: int, dep
         "budget_minutes": budget_text(cfg, max_minutes),
         "transcript": transcript,
     }
-    try:
-        data, llm_meta = llm.call_json(deps.prompt("episode"), inputs, lambda d: script.validate(d, rules),
-                                       deps.runner, cfg.llm.max_attempts)
-    except llm.LLMAuthError:
-        raise
-    except llm.LLMError as e:  # Claude answered (the token was accepted) but nothing valid came back
-        base["llm_ok"] = True
-        return base | _charge(conn, cfg, item_id, "script", str(e))
-    base["llm_ok"] = True  # every result from here on proves the token works, whatever happens to voice/mix
+    lib = var / "library" / str(item_id)
+    cache = lib / "script.json"
+    cached = _cached_script(cache, rules)
+    if cached:  # a paid script whose voice/master step failed: reuse it, no Claude call (and no proof of the token)
+        data, llm_meta = cached
+        base["script_cached"] = True
+    else:
+        try:
+            data, llm_meta = llm.call_json(deps.prompt("episode"), inputs, lambda d: script.validate(d, rules),
+                                           deps.runner, cfg.llm.max_attempts)
+        except llm.LLMAuthError:
+            raise
+        except llm.LLMUnavailable as e:  # outage / limit / hang: not the item's fault, and no proof of the token
+            return base | {"status": "failed", "stage": "script", "error": str(e)[:300], "item_failed": False,
+                           "provider_down": True}
+        except llm.LLMError as e:  # Claude answered (the token was accepted) but nothing valid came back
+            base["llm_ok"] = True
+            return base | _charge(conn, cfg, item_id, "script", str(e))
+        base["llm_ok"] = True  # every result from here on proves the token works, whatever happens to voice/mix
     built_at = now.isoformat(timespec="seconds")
 
     if data.get("skip") is True:  # off-brief: remembered, never picked again, no voice spent
@@ -295,7 +320,9 @@ def build_one(conn: sqlite3.Connection, cfg: Config, b: Brief, item_id: int, dep
                      (item_id, segment, data["reason"], built_at))
         return base | {"status": "skipped", "reason": data["reason"]}
 
-    lib = var / "library" / str(item_id)
+    if not cached:  # before any voice is bought, so the next hour need not pay Claude again
+        lib.mkdir(parents=True, exist_ok=True)
+        _write_json(cache, {"script": data, "llm": llm_meta, "max_minutes": max_minutes})
     wav = work / "episode.wav"
     try:
         voiced = render_heygen(conn, cfg, date, segment, data["turns"], wav, post, fetch, deps.sleep)
@@ -304,6 +331,10 @@ def build_one(conn: sqlite3.Connection, cfg: Config, b: Brief, item_id: int, dep
                                mx.true_peak_db, mx.bitrate, mx.intro, mx.outro)
     except voice.DailyCapReached as e:  # the script was longer than the estimate; try again tomorrow's money
         return base | {"status": "capped", "reason": str(e)}
+    except voice.VoiceUnavailable as e:  # provider outage / account trouble: the episode is fine, so no attempt is
+        # charged; the run stops (run_once) and is recorded failed. Partial spend was booked by render_heygen.
+        return base | {"status": "failed", "stage": "voice", "error": str(e)[:300], "item_failed": False,
+                       "provider_down": True}
     except (voice.VoiceError, mix.MixError) as e:
         return base | _charge(conn, cfg, item_id, "voice", str(e))
     # not ours to raise but still the episode's bill: HeyGen has been paid, so without this the next hour would
@@ -313,6 +344,7 @@ def build_one(conn: sqlite3.Connection, cfg: Config, b: Brief, item_id: int, dep
     finally:
         wav.unlink(missing_ok=True)
 
+    cache.unlink(missing_ok=True)  # episode.json carries the turns now; library pruning removes the rest
     _write_json(lib / "episode.json", {
         "item_id": item_id, "creator": creator, "source_title": title, "published": published, "segment": segment,
         "title": data["title"], "why": data["why"], "chapters": data["chapters"], "so_what": data["so_what"],
@@ -348,6 +380,9 @@ def run_once(conn: sqlite3.Connection, cfg: Config, deps: Deps) -> dict:
         meta["feeds_ok"] = ok
         meta["feeds_failed"] = {n: err[:c.feed_error_chars] for n, err in failed.items()}
     b = brief.load_brief(brief.effective_path(cfg), cfg.brief.tv_forbidden_terms)  # invalid = loud failure
+    if failed and not ok:  # every feed failed: the network is down, so Claude/voice would only hang or fail
+        meta["outcome"] = "offline"
+        return meta
     built = skips = 0
     for item_id in pick(conn, cfg, b, now.date()):
         result = build_one(conn, cfg, b, item_id, deps)
@@ -366,6 +401,8 @@ def run_once(conn: sqlite3.Connection, cfg: Config, deps: Deps) -> dict:
             skips += 1
             if skips >= cfg.build.max_skips_per_run:
                 break
+        elif result.get("provider_down"):  # one outage must not be "discovered" once per candidate
+            break
         elif status == "deferred" or (status == "failed" and result.get("stage") == "transcript"):
             continue  # YouTube could not be asked / no transcript: no Claude call was spent, try the next candidate
         else:  # capped, or an episode failed after Claude/voice work: stop and let the next hour retry
@@ -374,8 +411,10 @@ def run_once(conn: sqlite3.Connection, cfg: Config, deps: Deps) -> dict:
 
 
 def run_failure(meta: dict) -> str | None:
-    """Why a run that built nothing counts as failed: its outcome was `failed` or `capped`. None for a run that
+    """Why a run that built nothing counts as failed: its outcome was `failed`, `capped` or `offline`. None for a run that
     built an episode, and for deferred / skipped / no-candidates runs (nobody is at fault; the next hour retries)."""
+    if meta["outcome"] == "offline":
+        return f"offline: {meta.get('collect_error', '')}"[:300]
     if meta["outcome"] not in ("failed", "capped") or any(r["status"] == "ready" for r in meta["results"]):
         return None
     last = meta["results"][-1]

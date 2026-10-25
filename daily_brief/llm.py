@@ -17,6 +17,7 @@ from pathlib import Path
 Runner = Callable[[str], tuple[int, str, str]]  # prompt -> (returncode, stdout, stderr)
 Validator = Callable[[dict], None]              # raises ValueError describing what is wrong
 
+TIMEOUT_RC = 124  # claude_runner's return code for a killed (timed-out) call; a hang is how a dead network shows
 FENCE = re.compile(r"```json\s*(.*?)```", re.DOTALL)
 
 
@@ -28,12 +29,18 @@ class LLMAuthError(LLMError):
     """Claude is logged out / the token is invalid. Retrying cannot help and no item is at fault."""
 
 
+class LLMUnavailable(LLMError):
+    """Claude could not be reached or is refusing work (timeout, network, overloaded, usage limit): the service,
+    not the item, is at fault. Raised on the first such attempt, never retried; nothing is charged to the item."""
+
+
 def is_auth_error(text: str, patterns: Sequence[str]) -> bool:
     return any(p and p in text for p in patterns)
 
 
 def claude_runner(command: str, args: list[str], model: str, timeout_s: int,
-                  env: dict[str, str] | None = None, auth_patterns: Sequence[str] = ()) -> Runner:
+                  env: dict[str, str] | None = None, auth_patterns: Sequence[str] = (),
+                  unavailable_patterns: Sequence[str] = ()) -> Runner:
     """env adds to the inherited environment (e.g. CLAUDE_CODE_OAUTH_TOKEN, since a systemd user unit has
     no login session). auth_patterns ride on the runner so call_json can classify a login failure."""
     cmd = [str(Path(command).expanduser()), *args, *(["--model", model] if model else [])]
@@ -47,6 +54,7 @@ def claude_runner(command: str, args: list[str], model: str, timeout_s: int,
         return r.returncode, r.stdout, r.stderr
 
     run.auth_patterns = list(auth_patterns)  # type: ignore[attr-defined]
+    run.unavailable_patterns = list(unavailable_patterns)  # type: ignore[attr-defined]
     return run
 
 
@@ -68,8 +76,10 @@ def parse_json(stdout: str) -> dict:
 
 
 def call_json(prompt: str, inputs: dict[str, str], validate: Validator, runner: Runner,
-              max_attempts: int, auth_patterns: Sequence[str] | None = None) -> tuple[dict, dict]:
+              max_attempts: int, auth_patterns: Sequence[str] | None = None,
+              unavailable_patterns: Sequence[str] | None = None) -> tuple[dict, dict]:
     patterns = auth_patterns if auth_patterns is not None else getattr(runner, "auth_patterns", ())
+    down = unavailable_patterns if unavailable_patterns is not None else getattr(runner, "unavailable_patterns", ())
     base = build_prompt(prompt, inputs)
     full, last_error = base, "no attempt made"
     t0 = time.monotonic()
@@ -78,6 +88,10 @@ def call_json(prompt: str, inputs: dict[str, str], validate: Validator, runner: 
         if rc != 0:
             if is_auth_error(f"{out}\n{err}", patterns):
                 raise LLMAuthError(f"exit {rc}: {(err.strip() or out.strip())[-300:]}")
+            # auth wins over unavailable; only failed exits are matched, so a transcript that merely mentions
+            # "rate limit" in a successful answer is never read as an outage
+            if rc == TIMEOUT_RC or is_auth_error(f"{out}\n{err}", down):
+                raise LLMUnavailable(f"exit {rc}: {(err.strip() or out.strip())[-300:]}")
             # claude -p sometimes reports the reason (e.g. a usage limit) on stdout with an empty stderr
             last_error = f"exit {rc}: {(err.strip() or out.strip())[-300:]}"
             continue

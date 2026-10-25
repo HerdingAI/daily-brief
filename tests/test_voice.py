@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -204,14 +205,38 @@ def test_heygen_poster_retries_5xx_then_succeeds(openrouter_stub):
 def test_heygen_poster_no_retry_on_400(openrouter_stub):
     openrouter_stub["statuses"] = [400]
     waits = []
-    with pytest.raises(voice.VoiceError, match="HeyGen TTS HTTP 400"):
+    with pytest.raises(voice.VoiceError, match="HeyGen TTS HTTP 400") as ei:
         voice.heygen_poster("m", "k", 5, retries=2, retry_wait_s=7, sleep=waits.append)({"input": "hi"})
+    assert not isinstance(ei.value, voice.VoiceUnavailable)  # a content error: charged to the episode
     assert waits == [] and len(openrouter_stub["calls"]) == 1
+
+
+@pytest.mark.parametrize("code", [401, 402, 403])
+def test_heygen_poster_account_errors_are_unavailable_without_retry(openrouter_stub, code):
+    openrouter_stub["statuses"] = [code]
+    with pytest.raises(voice.VoiceUnavailable, match=f"HTTP {code}"):
+        voice.heygen_poster("m", "k", 5, retries=2, retry_wait_s=7, sleep=lambda s: None)({"input": "hi"})
+    assert len(openrouter_stub["calls"]) == 1
+
+
+def test_heygen_poster_unreachable_is_unavailable(monkeypatch):
+    monkeypatch.setattr(voice, "OPENROUTER_BASE", "http://127.0.0.1:1")
+    with pytest.raises(voice.VoiceUnavailable, match="unreachable"):
+        voice.heygen_poster("m", "k", 1, retries=1, retry_wait_s=0, sleep=lambda s: None)({"input": "hi"})
+
+
+def test_render_turns_keeps_the_unavailable_type():
+    def synth(text, voice_name):
+        raise voice.VoiceUnavailable("HTTP 503")
+
+    with pytest.raises(voice.VoiceUnavailable):
+        voice.render_turns([{"speaker": "A", "text": "hi"}], {"A": "v"}, Path("/nonexistent/x.wav"), synth,
+                           24000, 0.1, 0.2, -20, -3)
 
 
 def test_heygen_poster_gives_up_after_retries_on_5xx(openrouter_stub):
     openrouter_stub["statuses"] = [500, 500, 500, 500]
-    with pytest.raises(voice.VoiceError, match="HTTP 500"):
+    with pytest.raises(voice.VoiceUnavailable, match="HTTP 500"):
         voice.heygen_poster("m", "k", 5, retries=2, retry_wait_s=0, sleep=lambda s: None)({"input": "hi"})
     assert len(openrouter_stub["calls"]) == 3
 

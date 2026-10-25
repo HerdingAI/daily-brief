@@ -57,9 +57,12 @@ audio_fallback = false         # transcript only, never download the video. No t
 command = "~/.local/bin/claude"   # absolute: systemd user units don't have ~/.local/bin on PATH
 args = ["-p", "--output-format", "text"]
 model = ""                        # empty = Claude Code's default model; set e.g. "opus" to pin
-timeout_seconds = 1800
+timeout_seconds = 600             # a real episode call takes ~2 min; with no network `claude -p` HANGS until killed,
+                                  # so this is also the most one outage can block the builder per attempt
 max_attempts = 2                  # second attempt gets the validation error fed back
 health_cache_seconds = 600        # /health/llm asks `claude auth status` at most this often (it is a subprocess)
+# failed-exit output (or a timeout) meaning Claude is unreachable / overloaded / limited: nothing is charged to the item
+unavailable_patterns = ["Connection error", "ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "fetch failed", "socket hang up", "Overloaded", "overloaded_error", "usage limit", "rate limit", "rate_limit_error", "529", "503 Service"]
 # output containing any of these means Claude is logged out: stop the run (exit 75), never retry per item
 auth_error_patterns = ["Failed to authenticate", "OAuth session expired", "Invalid API key", "Please run /login", "authentication_error"]
 # the token itself (CLAUDE_CODE_OAUTH_TOKEN, from `claude setup-token`) lives in voice.secrets_file, the one secrets file

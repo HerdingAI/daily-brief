@@ -24,6 +24,11 @@ class VoiceError(RuntimeError):
     """The script can't be voiced, or synthesis produced no audio."""
 
 
+class VoiceUnavailable(VoiceError):
+    """The provider, not the episode, is at fault: still failing after the retries (429/5xx/timeout/unreachable) or
+    refusing the account (401/402/403). Nothing is charged to the item and the run stops trying further ones."""
+
+
 class VoiceNotConfigured(VoiceError):
     """No OpenRouter key: the environment, not the episode, is at fault, so nothing is charged to the item."""
 
@@ -39,13 +44,15 @@ def char_count(turns: list[dict]) -> int:
 
 # ---- HeyGen Voice via OpenRouter ---------------------------------------------------------------------
 
+ACCOUNT_CODES = (401, 402, 403)  # key rejected / out of credit / forbidden: the account, not the episode
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"  # module constant so tests can point it at a local server
 
 
 def heygen_poster(model: str, key: str, timeout_s: int, retries: int, retry_wait_s: float,
                   sleep: Callable[[float], None] = time.sleep) -> Callable[[dict], tuple[bytes, str | None]]:
     """POST one turn -> (raw pcm, x-generation-id). Transient trouble (URLError, 429, 5xx) is retried up to
-    `retries` times; any other 4xx (bad voice, 402 out of credit) is final, so it fails the episode at once."""
+    `retries` times, then raises VoiceUnavailable. 401/402/403 (bad key, out of credit) are VoiceUnavailable at once;
+    any other 4xx (bad voice, bad request) is the episode's own VoiceError."""
 
     def once(body: dict) -> tuple[bytes, str | None]:
         req = urllib.request.Request(f"{OPENROUTER_BASE}/audio/speech", data=json.dumps({"model": model} | body).encode(),
@@ -59,11 +66,13 @@ def heygen_poster(model: str, key: str, timeout_s: int, retries: int, retry_wait
             try:
                 return once(body)
             except urllib.error.HTTPError as e:
-                if not (e.code == 429 or e.code >= 500) or last:
-                    raise VoiceError(f"HeyGen TTS HTTP {e.code}: {e.read().decode(errors='replace')[:300]}") from e
+                transient = e.code == 429 or e.code >= 500
+                if not transient or last:
+                    cls = VoiceUnavailable if transient or e.code in ACCOUNT_CODES else VoiceError
+                    raise cls(f"HeyGen TTS HTTP {e.code}: {e.read().decode(errors='replace')[:300]}") from e
             except (urllib.error.URLError, OSError) as e:  # timeouts and resets are OSErrors too
                 if last:
-                    raise VoiceError(f"HeyGen TTS unreachable: {e}") from e
+                    raise VoiceUnavailable(f"HeyGen TTS unreachable: {e}") from e
             sleep(retry_wait_s)
         raise AssertionError("unreachable")  # the loop always returns or raises
 
@@ -154,6 +163,8 @@ def render_turns(turns: list[dict], voices: dict[str, str], out: Path, synth: Sy
             audio = synth(t["text"].strip(), name)
         # transport boundary: whatever the HTTP layer or a decoder raises must reach the builder as a VoiceError,
         # so it counts against the episode instead of crashing the run
+        except VoiceUnavailable:  # the provider's outage keeps its type: it must not be charged to the episode
+            raise
         except Exception as e:
             raise VoiceError(f"turn {i}: synthesis with {name} failed: {type(e).__name__}: {e}") from e
         if audio.size == 0:

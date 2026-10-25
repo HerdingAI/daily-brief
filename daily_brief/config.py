@@ -101,6 +101,7 @@ class LLM:
     timeout_seconds: int
     max_attempts: int
     auth_error_patterns: list[str]  # output that means "logged out", never retried
+    unavailable_patterns: list[str]  # failed-exit output that means "Claude is down / limited", never charged to an item
     health_cache_seconds: int       # /health/llm re-asks `claude auth status` at most this often
 
 
@@ -308,6 +309,7 @@ def load_config(path: str | Path) -> Config:
             timeout_seconds=_get(raw, "llm.timeout_seconds", int),
             max_attempts=_get(raw, "llm.max_attempts", int),
             auth_error_patterns=_get(raw, "llm.auth_error_patterns", list),
+            unavailable_patterns=_get(raw, "llm.unavailable_patterns", list),
             health_cache_seconds=_get(raw, "llm.health_cache_seconds", int),
         ),
         voice=Voice(
@@ -420,5 +422,7 @@ def _validate(cfg: Config) -> None:
         raise ConfigError("pipeline.enabled_segments must not be empty")
     if not cfg.llm.auth_error_patterns or not all(isinstance(x, str) and x for x in cfg.llm.auth_error_patterns):
         raise ConfigError("llm.auth_error_patterns must be a non-empty list of non-empty strings")
+    if not all(isinstance(x, str) and x for x in cfg.llm.unavailable_patterns):
+        raise ConfigError("llm.unavailable_patterns must be a list of non-empty strings")
     if not 0 <= cfg.player.volume <= 100:
         raise ConfigError("player.volume must be 0-100")

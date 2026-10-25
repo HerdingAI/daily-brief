@@ -126,3 +126,47 @@ def test_runner_passes_token_env(monkeypatch):
     plain("hi")
     assert plain.auth_patterns == ["X"]
     assert seen["env"] is None  # no override: inherit the process environment
+
+
+DOWN = ["Overloaded", "usage limit"]
+
+
+def test_timeout_is_unavailable_after_one_attempt():
+    calls = []
+
+    def run(prompt):
+        calls.append(prompt)
+        return 124, "", "timed out after 600s"
+
+    with pytest.raises(llm.LLMUnavailable, match="timed out"):
+        llm.call_json("P", {}, lambda d: None, run, max_attempts=3, unavailable_patterns=DOWN)
+    assert len(calls) == 1 and issubclass(llm.LLMUnavailable, llm.LLMError)
+
+
+def test_unavailable_pattern_on_a_failed_exit_is_unavailable_without_retry():
+    calls = []
+
+    def run(prompt):
+        calls.append(1)
+        return 1, "", "API Error: Overloaded"
+
+    with pytest.raises(llm.LLMUnavailable):
+        llm.call_json("P", {}, lambda d: None, run, max_attempts=3, unavailable_patterns=DOWN)
+    assert len(calls) == 1
+
+
+def test_auth_beats_unavailable_and_bad_json_stays_a_plain_error():
+    def logged_out(prompt):
+        return 1, "Failed to authenticate (Overloaded)", ""
+
+    with pytest.raises(llm.LLMAuthError):
+        llm.call_json("P", {}, lambda d: None, logged_out, 2, auth_patterns=["Failed to authenticate"],
+                      unavailable_patterns=DOWN)
+    with pytest.raises(llm.LLMError) as e:  # Claude answered, badly (and even mentions a limit): charged as before
+        llm.call_json("P", {}, lambda d: None, lambda p: (0, "usage limit talk, no json", ""), 2,
+                      unavailable_patterns=DOWN)
+    assert not isinstance(e.value, llm.LLMUnavailable)
+
+
+def test_runner_carries_unavailable_patterns():
+    assert llm.claude_runner("claude", [], "", 5, unavailable_patterns=["X"]).unavailable_patterns == ["X"]

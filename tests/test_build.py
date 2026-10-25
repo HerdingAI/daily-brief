@@ -44,7 +44,7 @@ def fake_model(output=None):
     return run
 
 
-def fake_heygen(seconds=30, cost=0.001, fail_on_call=None):
+def fake_heygen(seconds=30, cost=0.001, fail_on_call=None, fail_with=None):
     """A HeyGen transport + billed-cost read-back, both offline. 30 s of pcm per turn."""
     calls = []
     pcm = (np.sin(2 * np.pi * 330 * np.arange(seconds * 44100) / 44100) * 3000).astype("<i2").tobytes()
@@ -52,7 +52,7 @@ def fake_heygen(seconds=30, cost=0.001, fail_on_call=None):
     def post(body):
         calls.append(body)
         if fail_on_call is not None and len(calls) == fail_on_call:
-            raise voice.VoiceError("HeyGen TTS HTTP 402: insufficient credits")
+            raise fail_with or voice.VoiceError("HeyGen TTS HTTP 400: bad voice")
         return pcm, f"gen-{len(calls)}"
 
     post.calls = calls
@@ -270,12 +270,78 @@ def test_build_one_failure_twice_sets_item_failed(env):
 
 def test_build_one_voice_failure_is_charged_keeps_the_bill_and_leaves_no_wav(env):
     item = add(env, LENNY, "t")
-    heygen = fake_heygen(fail_on_call=3)
+    heygen = fake_heygen(fail_on_call=3)  # a 400: the episode's own problem
     res = build.build_one(env.conn, env.cfg, env.b, item, make_deps(fake_model(), heygen))
-    assert res["status"] == "failed" and res["stage"] == "voice" and "402" in res["error"]
+    assert res["status"] == "failed" and res["stage"] == "voice" and "400" in res["error"]
     assert item_row(env, item)[1] == 1 and episode_row(env, item) is None
     assert env.conn.execute("select requests, billed_usd from voice_costs").fetchone() == (3, pytest.approx(0.002))
-    assert not list(env.cfg.paths.var_dir.rglob("*.wav")) and not (env.cfg.paths.var_dir / "library").exists()
+    # only the paid script is kept (no wav, no episode.mp3/json)
+    assert not list(env.cfg.paths.var_dir.rglob("*.wav"))
+    assert [f.name for f in (env.cfg.paths.var_dir / "library").rglob("*") if f.is_file()] == ["script.json"]
+
+
+def script_cache(env, item):
+    return env.cfg.paths.var_dir / "library" / str(item) / "script.json"
+
+
+@pytest.mark.parametrize("err", [voice.VoiceUnavailable("HeyGen TTS HTTP 503: down"),
+                                 voice.VoiceUnavailable("HeyGen TTS HTTP 402: insufficient credits")])
+def test_build_one_provider_outage_is_not_charged_keeps_partial_bill(env, err):
+    item = add(env, LENNY, "t")
+    res = build.build_one(env.conn, env.cfg, env.b, item, make_deps(heygen=fake_heygen(fail_on_call=3, fail_with=err)))
+    assert (res["status"], res["stage"], res["item_failed"], res["provider_down"]) == ("failed", "voice", False, True)
+    assert str(err) in res["error"] and item_row(env, item)[1] == 0 and episode_row(env, item) is None
+    assert env.conn.execute("select requests, billed_usd from voice_costs").fetchone() == (3, pytest.approx(0.002))
+
+
+def test_run_stops_after_the_first_item_when_the_provider_is_down(env):
+    first, second = add(env, LENNY, "a"), add(env, GROWTH, "b")
+    model, heygen = fake_model(), fake_heygen(fail_on_call=1, fail_with=voice.VoiceUnavailable("HeyGen TTS HTTP 503: x"))
+    meta = build.run_once(env.conn, env.cfg, make_deps(model, heygen))
+    assert len(meta["picked"]) == 1 and len(model.calls) == 1 and len(heygen[0].calls) == 1
+    assert meta["outcome"] == "failed" and "HTTP 503" in build.run_failure(meta)
+    assert item_row(env, first)[1] == 0 and item_row(env, second)[1] == 0
+
+
+def test_voice_failure_keeps_the_paid_script_and_the_next_build_reuses_it(env):
+    item = add(env, LENNY, "t")
+    down = voice.VoiceUnavailable("HeyGen TTS HTTP 503: x")
+    first = build.build_one(env.conn, env.cfg, env.b, item, make_deps(heygen=fake_heygen(fail_on_call=1, fail_with=down)))
+    cached = json.loads(script_cache(env, item).read_text())
+    assert first["llm_ok"] is True and cached["script"] == valid_episode() and cached["llm"]["attempts"] == 1
+    assert cached["max_minutes"] > 0
+    model, heygen = fake_model(), fake_heygen()
+    res = build.build_one(env.conn, env.cfg, env.b, item, make_deps(model, heygen))
+    assert model.calls == [] and res["status"] == "ready" and res["script_cached"] is True
+    assert "llm_ok" not in res  # a cached run proves nothing about the token
+    assert len(heygen[0].calls) == 6 and not script_cache(env, item).exists()  # voiced the cached turns; cache dropped
+    assert json.loads((script_cache(env, item).parent / "episode.json").read_text())["llm"]["attempts"] == 1
+
+
+@pytest.mark.parametrize("content", ["not json {", json.dumps({"script": {"title": "x"}, "llm": {}}),
+                                     json.dumps({"script": {"skip": True, "reason": "r"}, "llm": {}}), "[]"])
+def test_unusable_script_cache_is_ignored_and_claude_is_called(env, content):
+    item = add(env, LENNY, "t")
+    script_cache(env, item).parent.mkdir(parents=True)
+    script_cache(env, item).write_text(content)
+    model = fake_model()
+    res = build.build_one(env.conn, env.cfg, env.b, item, make_deps(model))
+    assert len(model.calls) == 1 and res["status"] == "ready" and res["llm_ok"] is True and "script_cached" not in res
+
+
+def test_skip_results_are_not_cached(env):
+    item = add(env, LENNY, "t")
+    res = build.build_one(env.conn, env.cfg, env.b, item, make_deps(fake_model({"skip": True, "reason": "off"})))
+    assert res["status"] == "skipped" and not script_cache(env, item).exists()
+
+
+def test_prune_library_leaves_the_cache_of_an_item_still_waiting(env):
+    from daily_brief import upkeep
+    item = add(env, LENNY, "t")
+    build.build_one(env.conn, env.cfg, env.b, item, make_deps(heygen=fake_heygen(
+        fail_on_call=1, fail_with=voice.VoiceUnavailable("HeyGen TTS HTTP 503: x"))))
+    upkeep.prune_library(env.cfg, env.conn, NOW.date() + dt.timedelta(days=999), 1)
+    assert script_cache(env, item).exists()
 
 
 def test_build_one_missing_openrouter_key_charges_nothing_and_skips_claude(env, tmp_path):
@@ -430,7 +496,7 @@ def test_run_stops_after_a_failed_episode_and_after_the_cap(env):
     assert [r["status"] for r in meta["results"]] == ["capped"]
 
 
-def test_run_collects_first_and_survives_a_feed_outage(env):
+def test_run_collects_first_and_goes_offline_when_every_feed_is_down(env):
     def down(url):
         raise OSError("network down")
 
@@ -438,10 +504,10 @@ def test_run_collects_first_and_survives_a_feed_outage(env):
     deps = make_deps(master=fake_master)
     deps.fetch = down
     meta = build.run_once(env.conn, env.cfg, deps)
-    assert "every feed failed" in meta["collect_error"] and meta["outcome"] == "ready"
+    assert "every feed failed" in meta["collect_error"] and meta["outcome"] == "offline" and meta["picked"] == []
     assert meta["feeds_ok"] == [] and set(meta["feeds_failed"]) == {s.name for s in env.cfg.sources}
     assert all("network down" in e for e in meta["feeds_failed"].values())
-    assert episode_row(env, item) is not None
+    assert episode_row(env, item) is None  # nothing was tried while offline
 
 
 def test_run_with_nothing_to_do(env):
@@ -540,7 +606,8 @@ def test_real_deps_passes_the_token_from_the_secrets_file(tmp_path, monkeypatch)
     cfg = load_config(write_config(tmp_path, {str(tmp_path / "secrets.env"): str(secrets_file)}))
     seen = {}
     monkeypatch.setattr(build.llm, "claude_runner",
-                        lambda command, args, model, timeout, env=None, auth_patterns=(): seen.update(env=env) or (lambda p: (0, "", "")))
+                        lambda command, args, model, timeout, env=None, auth_patterns=(),
+                                  unavailable_patterns=(): seen.update(env=env) or (lambda p: (0, "", "")))
     deps = build.real_deps(cfg)
     assert seen["env"] == {"CLAUDE_CODE_OAUTH_TOKEN": "tok-123"} and deps.prompts_dir == REPO / "prompts"
     assert deps.captions is not None and deps.listing is not None
@@ -626,3 +693,51 @@ def test_run_records_per_feed_outcome(env, monkeypatch):
     meta = build.run_once(env.conn, env.cfg, make_deps())
     assert meta["feeds_failed"] == {bad: "E" * env.cfg.collect.feed_error_chars}
     assert meta["feeds_ok"] == [s.name for s in env.cfg.sources[1:]] and "collect_error" not in meta
+
+
+# ---- Claude unavailable / offline ---------------------------------------------------------------------
+
+def hung_model(rc=124, out="", err="timed out after 600s"):
+    calls = []
+
+    def run(prompt):
+        calls.append(prompt)
+        return rc, out, err
+
+    run.calls, run.auth_patterns = calls, []
+    run.unavailable_patterns = ["Overloaded"]
+    return run
+
+
+@pytest.mark.parametrize("model", [hung_model(), hung_model(1, "", "API Error: Overloaded")])
+def test_build_one_claude_unavailable_is_not_charged_and_not_llm_ok(env, model):
+    item = add(env, LENNY, "t")
+    heygen = fake_heygen()
+    res = build.build_one(env.conn, env.cfg, env.b, item, make_deps(model, heygen))
+    assert (res["status"], res["stage"], res["item_failed"], res["provider_down"]) == ("failed", "script", False, True)
+    assert "llm_ok" not in res and item_row(env, item)[1] == 0 and len(model.calls) == 1 and heygen[0].calls == []
+
+
+def test_run_stops_after_the_first_item_when_claude_is_down(env):
+    add(env, LENNY, "a"), add(env, GROWTH, "b")
+    model = hung_model()
+    meta = build.run_once(env.conn, env.cfg, make_deps(model))
+    assert len(meta["picked"]) == 1 and len(model.calls) == 1 and "llm_ok" not in meta
+    assert build.run_failure(meta).startswith("failed: exit 124")
+
+
+def test_every_feed_failing_means_offline_and_nothing_is_called(env, tmp_path, monkeypatch):
+    item = add(env, LENNY, "t")
+    model, heygen = fake_model(), fake_heygen()
+    deps = make_deps(model, heygen)
+
+    def dead(url):
+        raise OSError("network unreachable")
+
+    deps.fetch = dead
+    assert _main(env, tmp_path, monkeypatch, deps) == 0
+    (status, error, meta), = run_rows(env)
+    meta = json.loads(meta)
+    assert status == "failed" and error.startswith("offline: CollectError: every feed failed") and meta["outcome"] == "offline"
+    assert meta["picked"] == [] and model.calls == [] and heygen[0].calls == [] and item_row(env, item)[1] == 0
+    assert run_rows(env, "upkeep")  # upkeep still ran
