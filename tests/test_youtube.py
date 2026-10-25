@@ -52,12 +52,12 @@ def audio_ok(url, dest):
 
 def test_captions_used_when_available(yt):
     conn, ids, tmp = yt
-    whisper_calls = []
+    asr_calls = []
     res = transcribe.transcribe_items(
         conn, ids[:1], tmp / "w", tmp / "t", download=audio_ok,
-        whisper=lambda p: whisper_calls.append(p) or [], every_s=30, max_attempts=3,
+        transcriber=lambda p: asr_calls.append(p) or [], every_s=30, max_attempts=3,
         captions=transcribe.CaptionFetcher(lambda url: "[00:00] from captions"))
-    assert res["ok"] == 1 and whisper_calls == []
+    assert res["ok"] == 1 and asr_calls == []
     assert conn.execute("select method from transcripts").fetchone()[0] == "captions"
 
 
@@ -72,10 +72,10 @@ def test_rate_limit_trips_breaker_and_falls_back_to_audio(yt):
     from types import SimpleNamespace as S
     cf = transcribe.CaptionFetcher(fetch)
     res = transcribe.transcribe_items(conn, ids, tmp / "w", tmp / "t", download=audio_ok,
-                                      whisper=lambda p: [S(start=0, text="from whisper")], every_s=30, max_attempts=3,
+                                      transcriber=lambda p: [S(start=0, text="from asr")], every_s=30, max_attempts=3,
                                       captions=cf, youtube_audio_fallback=True)
     assert res["ok"] == 3 and len(tried) == 1 and cf.tripped  # one 429, then no more caption requests
-    assert {r[0] for r in conn.execute("select method from transcripts")} == {"whisper"}
+    assert {r[0] for r in conn.execute("select method from transcripts")} == {"asr"}
 
 
 def test_captions_never_tried_for_podcast_audio(yt):
@@ -84,7 +84,7 @@ def test_captions_never_tried_for_podcast_audio(yt):
     tried = []
     from types import SimpleNamespace as S
     transcribe.transcribe_items(conn, [rss_item], tmp / "w", tmp / "t", download=audio_ok,
-                                whisper=lambda p: [S(start=0, text="w")], every_s=30, max_attempts=3,
+                                transcriber=lambda p: [S(start=0, text="w")], every_s=30, max_attempts=3,
                                 captions=transcribe.CaptionFetcher(lambda u: tried.append(u)))
     assert tried == []
 
@@ -96,7 +96,7 @@ def test_youtube_without_transcript_fails_and_never_downloads(yt):
     downloads = []
     res = transcribe.transcribe_items(
         conn, ids[:1], tmp / "w", tmp / "t", download=lambda u, d: downloads.append(u),
-        whisper=lambda p: pytest.fail("no whisper for YouTube"), every_s=30, max_attempts=3,
+        transcriber=lambda p: pytest.fail("no asr for YouTube"), every_s=30, max_attempts=3,
         captions=transcribe.CaptionFetcher(lambda url: None))
     assert res["failed"] == 1 and downloads == []
     status, reason = conn.execute("select status, fail_reason from items where id=?", (ids[0],)).fetchone()
@@ -174,7 +174,7 @@ def test_tripped_breaker_defers_without_charging_an_attempt(yt):
     captions = transcribe.first_captions(transcribe.CaptionFetcher(blocked))
     for _night in range(5):  # more nights than max_attempts: still retryable afterwards
         res = transcribe.transcribe_items(conn, ids, tmp / "w", tmp / "t", download=lambda u, d: pytest.fail("no video"),
-                                          whisper=lambda p: pytest.fail("no whisper"), every_s=30, max_attempts=3,
+                                          transcriber=lambda p: pytest.fail("no asr"), every_s=30, max_attempts=3,
                                           captions=captions)
         assert res["deferred"] == 3 and res["failed"] == 0
     rows = conn.execute("select status, attempts, fail_reason from items").fetchall()
@@ -186,7 +186,7 @@ def test_genuinely_missing_transcript_still_charges_attempts(yt):
     captions = transcribe.first_captions(transcribe.CaptionFetcher(lambda url: None))  # answered: no transcript
     for _night in range(3):
         transcribe.transcribe_items(conn, ids[:1], tmp / "w", tmp / "t", download=lambda u, d: None,
-                                    whisper=lambda p: [], every_s=30, max_attempts=3, captions=captions)
+                                    transcriber=lambda p: [], every_s=30, max_attempts=3, captions=captions)
     assert conn.execute("select status from items where id=?", (ids[0],)).fetchone()[0] == "failed"
 
 

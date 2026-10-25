@@ -53,3 +53,21 @@ def write_config(tmp_path: Path, replace: dict[str, str] | None = None) -> Path:
     out = tmp_path / "config.toml"
     out.write_text(text)
     return out
+
+
+class FakeASR:
+    """A stand-in for asr.Transcriber: canned segments, a usage meter, and an optional error raised on call N."""
+
+    def __init__(self, segments=None, cost=0.0003, fail_on_call=None, fail_with=None):
+        from daily_brief import asr
+        self.segments = segments if segments is not None else [asr.Segment(0, "words " * 400)]
+        self.cost, self.fail_on_call, self.fail_with = cost, fail_on_call, fail_with
+        self.usage, self.calls = asr.Usage(), []
+
+    def __call__(self, path):
+        self.calls.append(path)
+        if self.fail_on_call == len(self.calls):
+            raise self.fail_with
+        self.usage.requests += 1
+        self.usage.cost += self.cost
+        return self.segments

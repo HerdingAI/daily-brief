@@ -34,11 +34,12 @@ feed_alert_lookback_hours = 168  # how far back to read build runs to find when 
 feed_error_chars = 200         # per-feed error text kept in the run meta
 
 [transcribe]
-model = "small.en"             # roughly 10x realtime on a modern CPU
-compute_type = "int8"
-cpu_threads = 4
-beam_size = 1
-vad_filter = true
+# OpenRouter speech-to-text (key: voice.secrets_file); ~$0.0002/min, ~$0.012/hour of audio (measured 2026-10-25)
+model = "qwen/qwen3-asr-0.6b"
+chunk_seconds = 600            # audio is cut into mono 16 kHz mp3 chunks of this length, one request each
+timeout_seconds = 300          # per request
+retries = 3                    # on timeouts, 429 and 5xx only; 401/402/403 stop the run at once, nothing charged to the item
+retry_wait_seconds = 10
 marker_every_seconds = 30      # [mm:ss] markers in the transcript
 max_attempts = 3               # after this many failed transcriptions an item is marked failed for good
 
@@ -141,7 +142,7 @@ name = "The Growth Podcast (Aakash Gupta)"
 url = "https://api.substack.com/feed/podcast/454003/s/133669.rss"
 backfill = true
 
-# ---- Segment A: AI engineering (both YouTube-only: captions first, audio + Whisper fallback) ----
+# ---- Segment A: AI engineering (both YouTube-only: captions first, audio + speech-to-text fallback) ----
 [[sources]]
 segment = "A"
 kind = "youtube"

@@ -25,7 +25,7 @@ rate against the script. To make your own, run `bin/voice-demo` with an OpenRout
 ```mermaid
 flowchart LR
     F["Feeds<br/>podcast RSS + YouTube"] --> B["Hourly builder<br/>(container)"]
-    B --> T["Transcript<br/>YouTube captions or<br/>faster-whisper on RSS audio"]
+    B --> T["Transcript<br/>YouTube captions or<br/>Qwen3 ASR on RSS audio"]
     T --> C["ONE Claude call<br/>prompts/episode.md<br/>script JSON or skip"]
     C --> V["Voice: HeyGen Voice 1 Turbo<br/>via OpenRouter<br/>one request per turn"]
     V --> M["Master<br/>ffmpeg loudnorm, MP3"]
@@ -43,8 +43,9 @@ flowchart LR
    the last `new_window_days`) and older back-catalog ones, and ignores clips and trailers.
 2. **Pick one.** It ranks candidates by keyword match between their titles and your relevance brief, never takes more
    than N per creator per day, and chooses a back-catalog episode only when a segment has nothing waiting.
-3. **Transcribe.** YouTube: captions only (the video is never downloaded). Podcasts: the RSS audio, transcribed locally
-   with faster-whisper.
+3. **Transcribe.** YouTube: captions only (the video is never downloaded). Podcasts: the RSS audio, cut into 10-minute
+   chunks and transcribed by `qwen/qwen3-asr-0.6b` on OpenRouter (about $0.012 per hour of audio; a 97-minute
+   episode took under a minute).
 4. **Write.** One `claude -p` call receives your brief, what you have already heard, your feedback and the transcript.
    It returns a validated JSON script for two hosts (ALEX explains, SAM is the skeptic) or `{"skip": true, "reason": ...}`
    when nothing clears the brief. The script is checked in code (`daily_brief/script.py`: length, turn size, speaker runs,
@@ -71,9 +72,9 @@ flowchart LR
   itself the backup: if the builder is down for a day, yesterday's surplus goes into the next show.
 - **It makes the file and stops there.** Playback (alarms, speakers, a phone) is a different problem. The output is a
   stable URL and a standard podcast feed, so whatever you already use to play audio can consume it.
-- **The spend cap is checked before any LLM call.** Today's billed voice spend plus an estimate for this episode must fit
-  under `daily_cap_usd`; if not, the run stops with `capped` before spending a Claude call or a request.
-- **Provider outages are never the episode's fault.** Voice 429/5xx/timeouts/401/402/403 and Claude timeouts, overload
+- **The spend cap is checked before any LLM call.** Today's billed voice and speech-to-text spend plus an estimate for this episode
+  must fit under `daily_cap_usd` (the speech-to-text cost of one episode, a few cents at most, can push past it); if not, the run stops with `capped` before spending a Claude call or a request.
+- **Provider outages are never the episode's fault.** Voice or speech-to-text 429/5xx/timeouts/401/402/403 and Claude timeouts, overload
   or usage limits are not charged to the episode and stop the hour's run (the next hour retries). A validated script is
   cached in `var/library/<id>/script.json`, so a failed voice step never pays for Claude twice.
 - **A skip is a result, and it is final.** An off-brief episode costs one Claude call and no voice, is stored as
@@ -117,7 +118,8 @@ and voice quality did. Full method and table: [`docs/tts-bakeoff.md`](docs/tts-b
 2026-10-25 and will drift; re-measure before you rely on them.
 
 **Cost per show:** about 12,000 characters per 14-minute episode at about $4 per million characters is **about $0.05
-per episode**. The default daily cap is **$0.15**. Claude usage is whatever your Claude Code login costs you (the
+per episode**, plus about $0.012 per hour of podcast audio transcribed (YouTube captions are free). The default
+daily cap is **$0.15**. Claude usage is whatever your Claude Code login costs you (the
 author uses a subscription, so there is no per-call bill).
 
 ## Reliability design
@@ -139,12 +141,11 @@ author uses a subscription, so there is no per-call bill).
 
 ## Requirements
 
-- Docker with the Compose plugin (the image bundles Python, ffmpeg, Node, the Claude Code CLI, yt-dlp and the
-  faster-whisper `small.en` model)
+- Docker with the Compose plugin (the image bundles Python, ffmpeg, Node, the Claude Code CLI and yt-dlp)
 - A Claude login for `claude -p`, either way:
   - `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` (uses your Claude subscription), or
   - `ANTHROPIC_API_KEY` (pay per use)
-- An [OpenRouter](https://openrouter.ai) API key with a few dollars of credit, for the voices
+- An [OpenRouter](https://openrouter.ai) API key with a few dollars of credit, for the voices and speech-to-text
 - About 2 GB of disk for the image, plus a few hundred MB a week of audio
 
 ## Quick start

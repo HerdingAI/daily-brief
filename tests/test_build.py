@@ -7,9 +7,9 @@ from types import SimpleNamespace as S
 import numpy as np
 import pytest
 
-from daily_brief import brief, build, collect, db, llm, queue, transcribe, voice
+from daily_brief import asr, brief, build, collect, db, llm, queue, transcribe, voice
 from daily_brief.config import load_config
-from tests.conftest import REPO, write_config
+from tests.conftest import REPO, FakeASR, write_config
 
 NOW = dt.datetime(2026, 10, 26, 10, 0, tzinfo=dt.UTC)
 TODAY = NOW.date().isoformat()
@@ -76,14 +76,14 @@ class Captions:
         return self.text
 
 
-def make_deps(model=None, heygen=None, captions=None, master=fake_master, now=NOW):
+def make_deps(model=None, heygen=None, captions=None, master=fake_master, now=NOW, asr_client=None):
     def download(url, dest):
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(b"mp3")
 
     post, fetch = heygen or fake_heygen()
     return build.Deps(runner=model or fake_model(), download=download,
-                      make_whisper=lambda: (lambda p: [S(start=0, text="words " * 400)]), now=lambda: now,
+                      make_transcriber=lambda: asr_client or FakeASR(), now=lambda: now,
                       prompts_dir=REPO / "prompts", fetch=empty_feed, captions=captions or Captions(),
                       heygen_post=post, heygen_fetch=fetch, sleep=lambda s: None, master=master,
                       assemble=lambda conn, cfg, date: {})
@@ -167,7 +167,7 @@ def test_build_one_happy_path_writes_library_and_episode_row(env):
                     "=== TRANSCRIPT ==="):
         assert section in prompt
     assert "agent-memory" in prompt and "Evals for AI PMs" in prompt  # history and episode metadata
-    assert "words words" in prompt  # the podcast was transcribed by the (fake) whisper
+    assert "words words" in prompt  # the podcast was transcribed by the (fake) ASR
     assert '"is_backcatalog": false' in prompt and LENNY in prompt
 
 
@@ -215,7 +215,7 @@ def test_build_one_skip_records_skipped_no_voice(env):
                           make_deps(fake_model({"skip": True, "reason": "Funding gossip."}), heygen))
     assert res["status"] == "skipped" and heygen[0].calls == []
     assert episode_row(env, item)[:3] == ("skipped", None, "Funding gossip.")
-    assert env.conn.execute("select count(*) from voice_costs").fetchone()[0] == 0
+    assert env.conn.execute("select count(*) from voice_costs where engine = 'heygen'").fetchone()[0] == 0
     assert not (env.cfg.paths.var_dir / "library" / str(item)).exists()
     assert item not in build.pick(env.conn, env.cfg, env.b, NOW.date())  # never picked again
 
@@ -275,7 +275,7 @@ def test_build_one_voice_failure_is_charged_keeps_the_bill_and_leaves_no_wav(env
     res = build.build_one(env.conn, env.cfg, env.b, item, make_deps(fake_model(), heygen))
     assert res["status"] == "failed" and res["stage"] == "voice" and "400" in res["error"]
     assert item_row(env, item)[1] == 1 and episode_row(env, item) is None
-    assert env.conn.execute("select requests, billed_usd from voice_costs").fetchone() == (3, pytest.approx(0.002))
+    assert env.conn.execute("select requests, billed_usd from voice_costs where engine = 'heygen'").fetchone() == (3, pytest.approx(0.002))
     # only the paid script is kept (no wav, no episode.mp3/json)
     assert not list(env.cfg.paths.var_dir.rglob("*.wav"))
     assert [f.name for f in (env.cfg.paths.var_dir / "library").rglob("*") if f.is_file()] == ["script.json"]
@@ -292,7 +292,7 @@ def test_build_one_provider_outage_is_not_charged_keeps_partial_bill(env, err):
     res = build.build_one(env.conn, env.cfg, env.b, item, make_deps(heygen=fake_heygen(fail_on_call=3, fail_with=err)))
     assert (res["status"], res["stage"], res["item_failed"], res["provider_down"]) == ("failed", "voice", False, True)
     assert str(err) in res["error"] and item_row(env, item)[1] == 0 and episode_row(env, item) is None
-    assert env.conn.execute("select requests, billed_usd from voice_costs").fetchone() == (3, pytest.approx(0.002))
+    assert env.conn.execute("select requests, billed_usd from voice_costs where engine = 'heygen'").fetchone() == (3, pytest.approx(0.002))
 
 
 def test_run_stops_after_the_first_item_when_the_provider_is_down(env):
@@ -655,7 +655,7 @@ def test_build_one_charges_a_mastering_crash_instead_of_letting_it_escape(env, e
     assert res["status"] == "failed" and res["stage"] == "master"
     assert item_row(env, item)[1] == 1 and episode_row(env, item) is None
     assert not list(env.cfg.paths.var_dir.rglob("*.wav"))
-    assert env.conn.execute("select count(*) from voice_costs").fetchone() == (1,)  # HeyGen was billed: kept
+    assert env.conn.execute("select count(*) from voice_costs where engine = 'heygen'").fetchone() == (1,)  # HeyGen was billed: kept
 
 
 # ---- cap accounting ---------------------------------------------------------------------------------
@@ -793,3 +793,48 @@ def test_llm_env_passes_the_token_or_an_api_key_and_nothing_else(env):
     assert build.llm_env(env.cfg) == {"ANTHROPIC_API_KEY": "ak"}
     f.write_text("OPENROUTER_API_KEY=or\nCLAUDE_CODE_OAUTH_TOKEN=tok\n")
     assert build.llm_env(env.cfg) == {"CLAUDE_CODE_OAUTH_TOKEN": "tok"}
+
+
+# ---- speech-to-text (OpenRouter ASR) ------------------------------------------------------------------
+
+def test_asr_transcription_is_booked_to_voice_costs_and_counts_against_the_cap(env):
+    item = add(env, LENNY, "t")  # a podcast: no captions, so the audio goes to ASR
+    client = FakeASR(cost=0.0004)
+    res = build.build_one(env.conn, env.cfg, env.b, item, make_deps(asr_client=client))
+    assert res["status"] == "ready"
+    assert env.conn.execute("select method from transcripts where item_id = ?", (item,)).fetchone() == ("asr",)
+    row = env.conn.execute("select segment, engine, chars, requests, billed_usd, missing from voice_costs "
+                           "where engine like 'asr:%'").fetchone()
+    assert row == ("B", "asr:qwen/qwen3-asr-0.6b", 0, 1, pytest.approx(0.0004), 0)
+    heygen = env.conn.execute("select sum(billed_usd) from voice_costs where engine = 'heygen'").fetchone()[0]
+    assert db.spend_today(env.conn, TODAY) == pytest.approx(heygen + 0.0004)  # the ASR bill is part of todays spend
+
+
+@pytest.mark.parametrize("code", [402, 503])
+def test_asr_outage_is_not_charged_keeps_partial_bill_and_stops_the_run(env, code):
+    first, second = add(env, LENNY, "a"), add(env, GROWTH, "b")
+    err = asr.TranscriptionUnavailable(f"ASR HTTP {code}: down")
+    client = FakeASR(fail_on_call=1, fail_with=err)
+    model = fake_model()
+    meta = build.run_once(env.conn, env.cfg, make_deps(model, asr_client=client))
+    assert len(meta["picked"]) == 1 and model.calls == [] and len(client.calls) == 1
+    assert meta["outcome"] == "failed" and f"HTTP {code}" in build.run_failure(meta)
+    assert meta["results"][0]["provider_down"] and meta["results"][0]["item_failed"] is False
+    assert item_row(env, first)[1] == 0 and item_row(env, second)[1] == 0
+    assert not list((env.cfg.paths.var_dir / "work").rglob("*.mp3"))  # the downloaded audio is gone
+
+
+def test_asr_item_failure_is_charged_and_the_partial_bill_is_kept(env):
+    item = add(env, LENNY, "t")
+    client = FakeASR(fail_on_call=1, fail_with=asr.TranscriptionError("ASR HTTP 400: bad audio"))
+    res = build.build_one(env.conn, env.cfg, env.b, item, make_deps(asr_client=client))
+    assert (res["status"], res["stage"]) == ("failed", "transcript") and "HTTP 400" in res["error"]
+    assert item_row(env, item)[1] == 1
+
+
+def test_asr_bill_is_booked_even_when_the_transcription_fails_after_billing(env):
+    item = add(env, LENNY, "t")
+    res = build.build_one(env.conn, env.cfg, env.b, item, make_deps(asr_client=FakeASR(segments=[], cost=0.0002)))
+    assert res["status"] == "failed" and "no text" in res["error"] and item_row(env, item)[1] == 1
+    assert env.conn.execute("select requests, billed_usd from voice_costs where engine like 'asr:%'").fetchone() \
+        == (1, pytest.approx(0.0002))

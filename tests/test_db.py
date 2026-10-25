@@ -128,7 +128,7 @@ def test_v5_adds_episodes_and_keeps_existing_rows(tmp_path):
                         "pragma user_version = 4;")
     raw.close()
     c = db.connect(path)
-    assert c.execute("pragma user_version").fetchone()[0] == db.SCHEMA_VERSION == 5
+    assert c.execute("pragma user_version").fetchone()[0] == db.SCHEMA_VERSION >= 5
     assert c.execute("select id from items").fetchall() == [(7,)]
     c.execute("insert into episodes(item_id, segment, status, built_at) values (7, 'A', 'ready', 'now')")
     assert c.execute("select assigned_date from episodes").fetchone() == (None,)
@@ -204,3 +204,24 @@ def test_two_connections_opening_a_fresh_database_both_succeed(tmp_path):
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert errors == []
+
+
+def test_v6_lets_transcripts_record_asr_and_keeps_old_rows(tmp_path):
+    path = tmp_path / "old.db"
+    raw = sqlite3.connect(path, isolation_level=None)  # a v5 database with a whisper transcript, as an upgraded install has it
+    raw.executescript(db.SCHEMA_V1 + db.SCHEMA_V2 + db.SCHEMA_V3 + db.SCHEMA_V4 + db.SCHEMA_V5
+                      + "insert into sources(id,segment,kind,url,name) values (1,'A','youtube','u','n');"
+                        "insert into items(id,source_id,guid,title) values (7,1,'g','t'), (8,1,'h','u'), (9,1,'i','v');"
+                        "insert into transcripts(item_id,method,path,words,created_at) values (7,'whisper','p',5,'then');"
+                        "pragma user_version = 5;")
+    with pytest.raises(sqlite3.IntegrityError):
+        raw.execute("insert into transcripts(item_id,method,path,words) values (8,'asr','p',1)")  # not yet allowed
+    raw.close()
+    c = db.connect(path)
+    assert c.execute("pragma user_version").fetchone()[0] == db.SCHEMA_VERSION == 6
+    assert c.execute("select item_id, method, path, words, created_at from transcripts").fetchall() \
+        == [(7, "whisper", "p", 5, "then")]
+    c.execute("insert into transcripts(item_id,method,path,words) values (8,'asr','p',1)")
+    with pytest.raises(sqlite3.IntegrityError):
+        c.execute("insert into transcripts(item_id,method,path,words) values (9,'vosk','p',1)")
+    assert c.execute("pragma foreign_key_check").fetchall() == []

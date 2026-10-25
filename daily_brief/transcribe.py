@@ -17,8 +17,10 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from types import SimpleNamespace
 
+from daily_brief import asr
+
 Download = Callable[[str, Path], None]
-Whisper = Callable[[Path], Iterable]  # returns segments with .start (seconds) and .text
+Transcriber = Callable[[Path], Iterable]  # returns segments with .start (seconds) and .text (daily_brief.asr)
 MARKER = re.compile(r"\[\d{2,}:\d{2}\]")
 
 
@@ -205,18 +207,6 @@ def http_download(url: str, dest: Path, timeout_s: int = 120, user_agent: str = 
     tmp.replace(dest)
 
 
-def make_whisper(model: str, compute_type: str, cpu_threads: int, beam_size: int, vad_filter: bool) -> Whisper:
-    from faster_whisper import WhisperModel  # heavy import, only when actually transcribing
-
-    wm = WhisperModel(model, device="cpu", compute_type=compute_type, cpu_threads=cpu_threads)
-
-    def run(path: Path):
-        segments, _ = wm.transcribe(str(path), language="en", beam_size=beam_size, vad_filter=vad_filter)
-        return segments  # a generator: the decoding happens as it is consumed
-
-    return run
-
-
 def record_failure(conn: sqlite3.Connection, item_id: int, reason: str, max_attempts: int) -> None:
     conn.execute(
         "update items set attempts = attempts + 1, fail_reason = ?, "
@@ -225,12 +215,13 @@ def record_failure(conn: sqlite3.Connection, item_id: int, reason: str, max_atte
 
 
 def transcribe_items(conn: sqlite3.Connection, item_ids: list[int], work_dir: Path, transcripts_dir: Path,
-                     download: Download, whisper: Whisper, every_s: int, max_attempts: int,
+                     download: Download, transcriber: Transcriber, every_s: int, max_attempts: int,
                      captions: Callable[[str], str | None] | None = None,
                      youtube_audio_fallback: bool = False) -> dict:
     """YouTube items are transcript-only unless youtube_audio_fallback. When YouTube can't be asked right now
     (TranscriptDeferred) the item is deferred with its reason recorded and NO attempt charged; only a
-    source that answered "no transcript" counts toward max_attempts. The video is never downloaded."""
+    source that answered "no transcript" counts toward max_attempts. The video is never downloaded.
+    asr.TranscriptionUnavailable (speech-to-text down / account refused) propagates uncharged to the caller."""
     stats = {"ok": 0, "failed": 0, "skipped": 0, "deferred": 0}
     transcripts_dir.mkdir(parents=True, exist_ok=True)
     for item_id in item_ids:
@@ -244,7 +235,7 @@ def transcribe_items(conn: sqlite3.Connection, item_ids: list[int], work_dir: Pa
         try:
             if not audio_url:
                 raise ValueError("item has no audio_url")
-            method, text = "whisper", None
+            method, text = "asr", None
             if captions is not None and is_youtube(audio_url):
                 try:
                     vtt = captions(audio_url)
@@ -263,7 +254,7 @@ def transcribe_items(conn: sqlite3.Connection, item_ids: list[int], work_dir: Pa
                                  "(the video is not downloaded by design)")
             if text is None:
                 download(audio_url, audio)
-                text = format_transcript(whisper(audio), every_s)
+                text = format_transcript(transcriber(audio), every_s)
             if not text.strip():
                 raise ValueError("transcription produced no text")
             out = transcripts_dir / f"{item_id}.txt"
@@ -274,6 +265,8 @@ def transcribe_items(conn: sqlite3.Connection, item_ids: list[int], work_dir: Pa
                          (item_id, method, str(out), spoken_words(text)))
             conn.execute("update items set status = 'transcribed', fail_reason = null, attempts = 0 where id = ?", (item_id,))
             stats["ok"] += 1
+        except asr.TranscriptionUnavailable:  # the provider is down, not this episode: charge nothing, stop the run
+            raise
         # per-item boundary: record why this episode failed and move on to the next one
         except Exception as e:  # noqa: BLE001
             record_failure(conn, item_id, f"{type(e).__name__}: {e}", max_attempts)

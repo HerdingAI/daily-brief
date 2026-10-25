@@ -115,7 +115,8 @@ def test_removed_night_machinery_is_gone_from_the_config():
     for table in ("[night]", "[preflight]", "[prefetch]", "[editor]", "[backcatalog]"):
         assert table not in text
     for key in ("backup_enabled", "fallback_items", "extract_max_attempts", "backlog_cap_per_source",
-                "stale_after_days", "backup_host", "sentence_gap_seconds", "cpu_threads = 16\n\n[mix]"):
+                "stale_after_days", "backup_host", "sentence_gap_seconds", "cpu_threads = 16\n\n[mix]",
+                "compute_type", "cpu_threads", "beam_size", "vad_filter", "small.en"):
         assert key not in text
 
 

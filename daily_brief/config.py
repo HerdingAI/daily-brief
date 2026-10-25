@@ -69,11 +69,11 @@ class Source:
 
 @dataclass(frozen=True)
 class Transcribe:
-    model: str
-    compute_type: str
-    cpu_threads: int
-    beam_size: int
-    vad_filter: bool
+    model: str                       # OpenRouter speech-to-text model
+    chunk_seconds: int               # audio is cut into chunks of this length, one request each
+    timeout_seconds: int
+    retries: int                     # on timeouts, 429 and 5xx only; 401/402/403 stop the run at once
+    retry_wait_seconds: int
     marker_every_seconds: int
     max_attempts: int
 
@@ -153,7 +153,7 @@ class Build:
 
 @dataclass(frozen=True)
 class Qa:
-    max_wer: float                   # audio_qa: word error rate (whisper vs script) above this fails the check
+    max_wer: float                   # audio_qa: word error rate (transcribed speech vs script) above this fails the check
 
 
 @dataclass(frozen=True)
@@ -291,10 +291,10 @@ def load_config(path: str | Path) -> Config:
         sources=_sources(raw),
         transcribe=Transcribe(
             model=_get(raw, "transcribe.model", str),
-            compute_type=_get(raw, "transcribe.compute_type", str),
-            cpu_threads=_get(raw, "transcribe.cpu_threads", int),
-            beam_size=_get(raw, "transcribe.beam_size", int),
-            vad_filter=_get(raw, "transcribe.vad_filter", bool),
+            chunk_seconds=_get(raw, "transcribe.chunk_seconds", int),
+            timeout_seconds=_get(raw, "transcribe.timeout_seconds", int),
+            retries=_get(raw, "transcribe.retries", int),
+            retry_wait_seconds=_get(raw, "transcribe.retry_wait_seconds", int),
             marker_every_seconds=_get(raw, "transcribe.marker_every_seconds", int),
             max_attempts=_get(raw, "transcribe.max_attempts", int),
         ),
@@ -421,6 +421,10 @@ def _validate(cfg: Config) -> None:
             or vc.cost_readback_attempts < 1 or vc.cost_readback_wait_seconds < 0:
         raise ConfigError("voice.price_per_million_chars and daily_cap_usd must be > 0; "
                           "cost_readback_attempts >= 1; cost_readback_wait_seconds >= 0")
+    tc = cfg.transcribe
+    if not tc.model or tc.chunk_seconds < 1 or tc.timeout_seconds < 1 or tc.retries < 0 or tc.retry_wait_seconds < 0:
+        raise ConfigError("transcribe: model non-empty; chunk_seconds and timeout_seconds >= 1; retries and "
+                          "retry_wait_seconds >= 0")
     if not cfg.pipeline.enabled_segments:
         raise ConfigError("pipeline.enabled_segments must not be empty")
     if not cfg.llm.auth_error_patterns or not all(isinstance(x, str) and x for x in cfg.llm.auth_error_patterns):

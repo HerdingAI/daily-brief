@@ -2,7 +2,7 @@
 # Daily Brief: one image for both compose services (api, builder). Targets: `runtime` (default) and `test`.
 FROM python:3.12-slim AS base
 
-# Everything that moves is pinned here (uv in the COPY --from below); bump deliberately. WHISPER_MODEL must match [transcribe] model in your config.toml.
+# Everything that moves is pinned here (uv in the COPY --from below); bump deliberately.
 ARG NODE_VERSION=22.23.4
 ARG CLAUDE_CODE_VERSION=2.1.310
 ARG YTDLP_VERSION=2026.10.21
@@ -52,13 +52,7 @@ CMD ["pytest", "-q", "-p", "no:warnings"]
 
 
 FROM base AS runtime
-ARG WHISPER_MODEL=small.en
 RUN uv sync --frozen --no-dev
-# Bake the Whisper model so the container never needs the network for it (HF_HUB_OFFLINE=1 below)
-ENV HF_HOME=/opt/hf
-RUN python -c "from faster_whisper import WhisperModel; WhisperModel('${WHISPER_MODEL}', device='cpu', compute_type='int8')" \
- && chmod -R a+rX /opt/hf
-ENV HF_HUB_OFFLINE=1
 COPY daily_brief ./daily_brief
 COPY prompts ./prompts
 COPY brief ./brief

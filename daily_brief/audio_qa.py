@@ -2,8 +2,9 @@
 
     python -m daily_brief.audio_qa config.toml var/library/<item_id>
 
-Prints {"wer": x, "words": n} (n = words in the script) and exits 1 when wer exceeds [qa] max_wer. It is a
-check for a person to run after a voice or mix change, not a step of the build: it loads the whisper model.
+Prints {"wer": x, "words": n, "cost_usd": c} (n = words in the script, c = the billed speech-to-text cost, about
+$0.002 per check) and exits 1 when wer exceeds [qa] max_wer. It is a check for a person to run after a voice or mix
+change, not a step of the build: it calls OpenRouter speech-to-text and books nothing to the database.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from daily_brief import transcribe
+from daily_brief import asr, build
 from daily_brief.config import load_config
 
 EXIT_OVER = 1
@@ -47,23 +48,28 @@ def wer(reference: str, hypothesis: str) -> tuple[float, int]:
     return edit_distance(ref, hyp) / len(ref), len(ref)
 
 
-def check_episode(item_dir: Path, whisper: transcribe.Whisper) -> dict:
+def check_episode(item_dir: Path, transcriber: asr.Transcriber) -> dict:
     meta = json.loads((item_dir / "episode.json").read_text())
     script_text = " ".join(t["text"] for t in meta["turns"])
-    spoken = " ".join(seg.text for seg in whisper(item_dir / "episode.mp3"))
+    try:
+        spoken = " ".join(seg.text for seg in transcriber(item_dir / "episode.mp3"))
+    finally:
+        cost = transcriber.usage.take().cost  # billed even when a later chunk failed
     rate, words = wer(script_text, spoken)
-    return {"wer": round(rate, 4), "words": words}
+    return {"wer": round(rate, 4), "words": words, "cost_usd": round(cost, 6)}
 
 
-def main(argv: list[str], make_whisper: Callable[[], transcribe.Whisper] | None = None) -> int:
+def main(argv: list[str], make_transcriber: Callable[[], asr.Transcriber] | None = None) -> int:
     if len(argv) != 3:
         print("usage: python -m daily_brief.audio_qa <config.toml> <library item dir>", file=sys.stderr)
         return 2
     cfg = load_config(argv[1])
-    t = cfg.transcribe
-    make = make_whisper or (lambda: transcribe.make_whisper(t.model, t.compute_type, t.cpu_threads, t.beam_size,
-                                                            t.vad_filter))
-    result = check_episode(Path(argv[2]), make())
+    make = make_transcriber or (lambda: build.make_transcriber(cfg))
+    try:
+        result = check_episode(Path(argv[2]), make())
+    except asr.TranscriptionError as e:  # provider trouble, a missing key or unreadable audio: no verdict
+        print(f"audio_qa: {e}", file=sys.stderr)
+        return 2
     print(json.dumps(result))
     return EXIT_OVER if result["wer"] > cfg.qa.max_wer else 0
 

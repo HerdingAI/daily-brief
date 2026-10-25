@@ -1,7 +1,7 @@
 """The builder container's scheduler: `python -m daily_brief.build` as a fresh child process at every
 build.interval_minutes boundary of the wall clock.
 
-A child per run returns Whisper's memory each time and means a crash or hang costs one run, never the loop. A child
+A child per run returns its memory each time and means a crash or hang costs one run, never the loop. A child
 that fails, cannot start or outlives build.run_timeout_minutes is logged and the loop carries on; SIGTERM (container
 stop) ends the child and the loop cleanly.
 """

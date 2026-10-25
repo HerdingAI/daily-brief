@@ -12,7 +12,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 RUN_STATUSES = {"running", "ok", "failed", "skipped"}
 
 SCHEMA_V1 = """
@@ -168,7 +168,23 @@ insert into episodes(item_id, segment, status, why, built_at)
      or exists (select 1 from rundown_items r where r.idea_ids like '%"e' || i.id || '.%');
 """
 
-MIGRATIONS = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V3, 4: SCHEMA_V4, 5: SCHEMA_V5}  # version -> DDL that upgrades from version-1
+SCHEMA_V6 = """
+-- transcripts.method gains 'asr' (OpenRouter speech-to-text replaced local Whisper). SQLite cannot alter a CHECK,
+-- so the table is rebuilt; old 'whisper' rows stay valid.
+create table transcripts_new (
+  item_id integer primary key references items(id),
+  method text not null check (method in ('rss','captions','whisper','asr')),
+  path text not null,
+  words integer not null,
+  created_at text not null default (datetime('now'))
+);
+insert into transcripts_new(item_id, method, path, words, created_at)
+  select item_id, method, path, words, created_at from transcripts;
+drop table transcripts;
+alter table transcripts_new rename to transcripts;
+"""
+
+MIGRATIONS = {1: SCHEMA_V1, 2: SCHEMA_V2, 3: SCHEMA_V3, 4: SCHEMA_V4, 5: SCHEMA_V5, 6: SCHEMA_V6}  # version -> DDL that upgrades from version-1
 
 
 class SchemaError(RuntimeError):

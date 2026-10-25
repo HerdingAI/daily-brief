@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from daily_brief import (
+    asr,
     brief,
     collect,
     db,
@@ -46,7 +47,7 @@ class Deps:
     """Everything with side effects, injectable for tests."""
     runner: llm.Runner
     download: transcribe.Download
-    make_whisper: Callable[[], transcribe.Whisper]
+    make_transcriber: Callable[[], asr.Transcriber]
     now: Callable[[], dt.datetime]
     prompts_dir: Path
     fetch: Callable[[str], bytes]                                       # feed fetcher
@@ -57,12 +58,16 @@ class Deps:
     sleep: Callable[[float], None] = time.sleep
     master: Callable[..., dict] = mix.master_segment
     assemble: Callable[[sqlite3.Connection, Config, str], dict] = queue.assemble
-    _whisper: transcribe.Whisper | None = field(default=None, repr=False)
+    _transcriber: asr.Transcriber | None = field(default=None, repr=False)
 
-    def whisper(self) -> transcribe.Whisper:
-        if self._whisper is None:
-            self._whisper = self.make_whisper()  # load the model only if something needs transcribing
-        return self._whisper
+    def transcriber(self) -> asr.Transcriber:
+        if self._transcriber is None:
+            self._transcriber = self.make_transcriber()  # needs the key only if something needs transcribing
+        return self._transcriber
+
+    def take_asr_usage(self) -> asr.Usage | None:
+        """Speech-to-text spend since the last call; None when nothing was transcribed."""
+        return self._transcriber.usage.take() if self._transcriber is not None else None
 
     def prompt(self, name: str) -> str:
         return (self.prompts_dir / f"{name}.md").read_text()
@@ -86,8 +91,20 @@ def llm_env(cfg: Config) -> dict[str, str] | None:
     return {k: found[k] for k in CLAUDE_KEYS if found.get(k)} or None
 
 
+def make_transcriber(cfg: Config, sleep: Callable[[float], None] = time.sleep) -> asr.Transcriber:
+    """The OpenRouter speech-to-text client; the key is the one the voice path uses. A missing key is the
+    environment's fault, so it is TranscriptionUnavailable (nothing charged to the item)."""
+    t = cfg.transcribe
+    try:
+        key = secrets.require(cfg.voice.secrets_file, "OPENROUTER_API_KEY")
+    except secrets.SecretMissing as e:
+        raise asr.TranscriptionUnavailable(str(e)) from e
+    return asr.make_transcriber(t.model, key, t.timeout_seconds, t.retries, t.retry_wait_seconds, t.chunk_seconds,
+                                sleep=sleep)
+
+
 def real_deps(cfg: Config) -> Deps:
-    t, y = cfg.transcribe, cfg.youtube
+    y = cfg.youtube
     return Deps(
         runner=llm.claude_runner(str(cfg.llm.command), cfg.llm.args, cfg.llm.model, cfg.llm.timeout_seconds,
                                  env=llm_env(cfg),
@@ -95,8 +112,7 @@ def real_deps(cfg: Config) -> Deps:
                                  unavailable_patterns=cfg.llm.unavailable_patterns),
         download=functools.partial(transcribe.download_any, timeout_s=cfg.collect.http_timeout_seconds * 5,
                                    user_agent=cfg.collect.user_agent, ytdlp=str(y.ytdlp)),
-        make_whisper=lambda: transcribe.make_whisper(t.model, t.compute_type, t.cpu_threads, t.beam_size,
-                                                     t.vad_filter),
+        make_transcriber=lambda: make_transcriber(cfg, sleep=time.sleep),
         now=lambda: dt.datetime.now().astimezone(),
         prompts_dir=Path(__file__).resolve().parent.parent / "prompts",
         fetch=functools.partial(collect.http_fetch, timeout_s=cfg.collect.http_timeout_seconds,
@@ -287,9 +303,18 @@ def build_one(conn: sqlite3.Connection, cfg: Config, b: Brief, item_id: int, dep
     var = cfg.paths.var_dir
     work = var / "work" / date / str(item_id)
     t = cfg.transcribe
-    stats = transcribe.transcribe_items(
-        conn, [item_id], work, var / "transcripts", deps.download, lambda p: deps.whisper()(p), t.marker_every_seconds,
-        t.max_attempts, captions=deps.captions, youtube_audio_fallback=cfg.youtube.audio_fallback)
+    try:
+        stats = transcribe.transcribe_items(
+            conn, [item_id], work, var / "transcripts", deps.download, lambda p: deps.transcriber()(p),
+            t.marker_every_seconds, t.max_attempts, captions=deps.captions,
+            youtube_audio_fallback=cfg.youtube.audio_fallback)
+    except asr.TranscriptionUnavailable as e:  # provider outage / account trouble: no attempt charged, the run stops
+        return base | {"status": "failed", "stage": "transcript", "error": str(e)[:300], "item_failed": False,
+                       "provider_down": True}
+    finally:
+        # also on failure: the chunks billed before a mid-episode error still count against the cap
+        if (spend := deps.take_asr_usage()) is not None and spend.requests:
+            db.add_voice_cost(conn, date, segment, f"asr:{t.model}", 0, spend.requests, spend.cost, spend.missing)
     row = conn.execute("select path from transcripts where item_id = ?", (item_id,)).fetchone()
     if stats["deferred"]:  # YouTube could not be asked: no attempt charged, the item stays first in line
         reason = conn.execute("select fail_reason from items where id = ?", (item_id,)).fetchone()[0]
