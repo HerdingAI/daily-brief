@@ -1,0 +1,13 @@
+[Unit]
+Description=Daily Brief: podcast alarm (today's segments A then B), started by alarm_tick
+# audio output (mpv) needs the desktop audio session; start after it
+After=pipewire.service wireplumber.service
+
+[Service]
+Type=simple
+WorkingDirectory=@APP_DIR@
+ExecStart=@APP_DIR@/.venv/bin/python -m daily_brief.show @APP_DIR@/config.toml --alarm
+# the runner ends with the last segment; this is a backstop in case mpv ignores the kill
+RuntimeMaxSec=8000
+Restart=on-failure
+RestartSec=5

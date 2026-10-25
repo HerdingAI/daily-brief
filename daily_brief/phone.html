@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Morning Brief</title>
+<style>
+  :root {
+    --bg: #0b0d12; --card: #151924; --line: #232a3a; --text: #e8ebf2; --muted: #8b93a7;
+    --accent: #f2b54a; --good: #4cc38a; --warn: #e5705c; --blue: #6aa9ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.45 -apple-system, "Segoe UI", Roboto, system-ui, sans-serif; padding: 16px 16px 120px; }
+  h1 { font-size: 20px; margin: 4px 0 2px; }
+  .date { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin: 12px 0; }
+  .seg-title { font-size: 17px; font-weight: 650; margin: 0 0 6px; }
+  .note { color: var(--muted); font-size: 14px; }
+  .item { border-top: 1px solid var(--line); padding: 12px 0 4px; }
+  .item:first-of-type { border-top: 0; }
+  .role { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); }
+  .why { margin: 4px 0 8px; }
+  .src { color: var(--muted); font-size: 13px; }
+  .fb { display: flex; gap: 8px; margin: 8px 0 6px; }
+  .fb button { flex: 1; min-height: 44px; border-radius: 10px; border: 1px solid var(--line);
+               background: #1c2231; color: var(--text); font-size: 15px; }
+  .fb button.on { border-color: var(--accent); background: #2a2415; }
+  details { margin-top: 10px; } summary { color: var(--muted); cursor: pointer; min-height: 32px; }
+  .cut { font-size: 14px; color: var(--muted); margin: 6px 0; }
+  .cut b { color: var(--warn); font-weight: 600; }
+  .sowhat { border-left: 3px solid var(--good); padding-left: 10px; margin-top: 10px; font-size: 15px; }
+  .upnext .item { padding: 10px 0 2px; }
+  .empty { color: var(--muted); text-align: center; padding: 30px 0; }
+  .bar { position: fixed; left: 0; right: 0; bottom: 0; background: #0f131bee; border-top: 1px solid var(--line);
+         padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); backdrop-filter: blur(8px); }
+  .np { font-size: 13px; color: var(--muted); margin-bottom: 8px; white-space: nowrap; overflow: hidden;
+        text-overflow: ellipsis; }
+  .ctl { display: flex; gap: 8px; }
+  .ctl button { flex: 1; min-height: 48px; border-radius: 12px; border: 0; background: #1c2231;
+                color: var(--text); font-size: 18px; }
+  .ctl button.primary { background: var(--blue); color: #0b0d12; font-weight: 700; }
+  .banner { background: #2a2415; border: 1px solid var(--accent); border-radius: 14px; padding: 12px 14px; margin: 8px 0 12px; }
+  .banner b { color: var(--accent); }
+  .banner pre { white-space: pre-wrap; font-size: 12px; max-height: 50vh; overflow: auto; background: #0f131b;
+                padding: 8px; border-radius: 8px; }
+  .banner pre .add { color: var(--good); } .banner pre .del { color: var(--warn); }
+  .banner .row { display: flex; gap: 8px; margin-top: 8px; }
+  .banner .row button { flex: 1; min-height: 44px; border-radius: 10px; border: 0; font-size: 15px; }
+  .ok { background: var(--good); color: #0b0d12; font-weight: 700; } .no { background: #1c2231; color: var(--text); }
+  #seek { width: 100%; margin: 0 0 8px; accent-color: var(--blue); height: 28px; }
+  .libday { margin-top: 10px; color: var(--muted); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+  .librow { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; min-height: 44px;
+            margin: 6px 0; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--line); background: #1c2231;
+            color: var(--text); font-size: 15px; }
+  .librow span:last-child { color: var(--muted); white-space: nowrap; }
+  .toast { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: #222a3b;
+           padding: 8px 14px; border-radius: 10px; font-size: 14px; opacity: 0; transition: opacity .2s; }
+  .toast.show { opacity: 1; }
+  .alarm label { margin-right: 10px; white-space: nowrap; }
+  .alarm .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+  .alarm input[type=time], .alarm select { min-height: 44px; border-radius: 10px; border: 1px solid var(--line);
+                                           background: #1c2231; color: var(--text); font-size: 16px; padding: 0 10px; }
+  .alarm input[type=checkbox] { width: 20px; height: 20px; vertical-align: middle; margin-right: 4px; }
+</style>
+</head>
+<body>
+<h1>Morning Brief</h1>
+<div class="date" id="date">Loading…</div>
+<div class="note" id="spend"></div>
+<div id="brief"></div>
+<details class="card" id="libbox"><summary><b>Library</b> · replay a past day</summary><div id="lib"></div></details>
+<details class="card alarm" id="alarm"><summary><b>Alarm</b> · <span id="alarm-next">…</span></summary>
+  <div class="row"><label><input type="checkbox" id="alarm-enabled">On</label>
+    <input type="time" id="alarm-time" value="06:00" aria-label="Alarm time">
+    <select id="alarm-sound" aria-label="Alarm sound"><option value="podcast">Podcast</option><option value="spotify">Spotify</option></select></div>
+  <div class="row" id="alarm-days">
+    <label><input type="checkbox" value="0">Mon</label><label><input type="checkbox" value="1">Tue</label>
+    <label><input type="checkbox" value="2">Wed</label><label><input type="checkbox" value="3">Thu</label>
+    <label><input type="checkbox" value="4">Fri</label><label><input type="checkbox" value="5">Sat</label>
+    <label><input type="checkbox" value="6">Sun</label></div>
+</details>
+<div id="segments"></div>
+
+<div class="bar">
+  <div class="np" id="np">Not playing</div>
+  <input type="range" id="seek" min="0" max="1000" value="0" aria-label="Position" disabled>
+  <div class="ctl">
+    <button onclick="ctl('rewind')" aria-label="Rewind 30 seconds">⏪</button>
+    <button class="primary" id="pp" onclick="togglePause()" aria-label="Play or pause">▶</button>
+    <button onclick="ctl('forward')" aria-label="Forward 30 seconds">⏩</button>
+    <button onclick="vol(-10)" aria-label="Volume down">−</button>
+    <button onclick="vol(10)" aria-label="Volume up">+</button>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const NAMES = { A: "AI Engineering", B: "Product" };
+const LABELS = { up: "👍", skip_topic: "Skip topic", deeper: "Go deeper" };
+let state = { date: null, paused: false, playing: false, duration: 0, volume: 70, given: new Set() };
+
+function toast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 1600);
+}
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+async function load() {
+  const r = await fetch("/today"); const d = await r.json();
+  state.date = d.date;
+  document.getElementById("date").textContent = new Date(d.date + "T12:00").toLocaleDateString(undefined,
+    { weekday: "long", month: "long", day: "numeric" });
+  state.given = new Set(d.feedback.map(f => `${f.segment}|${f.cluster_id}|${f.kind}`));
+  const box = document.getElementById("segments");
+  const segs = Object.keys(d.segments).sort();
+  if (!segs.length) {
+    // not assembled yet: show what is waiting in the library (the first Play or the alarm builds the morning)
+    const up = d.up_next || [];
+    box.innerHTML = up.length ? `<div class="card upnext"><div class="seg-title">Up next</div>${up.map(e => `
+      <div class="item">
+        <div class="role">${esc(NAMES[e.segment] || e.segment)} · ${esc(Math.round(e.seconds / 60))} min</div>
+        <div class="seg-title">${esc(e.title)}</div>
+        <div class="why">${esc(e.why)}</div>
+      </div>`).join("")}</div>` : '<div class="empty">No segments for today yet.</div>';
+    return;
+  }
+  box.innerHTML = segs.map(s => {
+    const g = d.segments[s];
+    const items = g.kept.map(k => `
+      <div class="item">
+        <div class="role">${esc(k.role.replace("_", " "))} · ${esc(k.minutes)} min</div>
+        <div class="why">${esc(k.why)}</div>
+        ${k.sources.length ? `<div class="src">${esc(k.sources.join(" · "))}</div>` : ""}
+        <div class="fb">${Object.entries(LABELS).map(([kind, lab]) => {
+          const on = state.given.has(`${s}|${k.cluster_id}|${kind}`) ? "on" : "";
+          return `<button class="${on}" onclick="fb(this,'${s}','${esc(k.cluster_id)}','${kind}')">${lab}</button>`;
+        }).join("")}</div>
+      </div>`).join("");
+    const cuts = g.cut.map(c => `<div class="cut"><b>${esc(c.reason)}</b> ${esc(c.note)}</div>`).join("");
+    return `<div class="card">
+      <div class="role">${esc(NAMES[s] || s)}</div>
+      <div class="seg-title">${esc(g.title)}</div>
+      ${items}
+      ${g.so_what ? `<div class="sowhat">${esc(g.so_what)}</div>` : ""}
+      <details><summary>Cut (${g.cut.length})</summary>${cuts}</details>
+    </div>`;
+  }).join("");
+}
+
+async function loadSpend() {
+  const h = await (await fetch("/health/show")).json();
+  document.getElementById("spend").textContent = `voice spend today $${h.spend_today.toFixed(3)} of $${h.cap.toFixed(3)}`;
+}
+
+async function fb(btn, segment, cluster_id, kind) {
+  const r = await fetch("/feedback", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date: state.date, segment, cluster_id, kind }) });
+  if (r.ok) { btn.classList.add("on"); toast("Noted: " + LABELS[kind]); } else toast("Couldn't save");
+}
+
+async function ctl(action, body) {
+  const r = await fetch("/player/" + action, { method: "POST",
+    headers: body ? { "Content-Type": "application/json" } : {}, body: body ? JSON.stringify(body) : undefined });
+  if (r.status === 409) toast("The show isn't playing"); else if (!r.ok) toast("Player error");
+  return r.ok;
+}
+async function togglePause() {
+  // Play plays (resume, or start the latest ready day); Stop/pause pauses
+  const wasPlay = !(state.playing && !state.paused);
+  if (await ctl(wasPlay ? "play" : "stop")) {
+    setTimeout(poll, 400);
+    if (wasPlay) load().then(loadLibrary);  // Play may have just assembled today: swap "Up next" for the morning
+  }
+}
+async function playDay(date, segment) {
+  const r = await fetch("/player/play", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ date, segment }) });
+  toast(r.ok ? `Playing ${date} · ${NAMES[segment] || segment}` : "Couldn't start that recording");
+  document.getElementById("libbox").open = false;
+  setTimeout(poll, 600);
+}
+async function loadLibrary() {
+  const d = await (await fetch("/library")).json();
+  const box = document.getElementById("lib");
+  if (!d.days.length) { box.innerHTML = '<div class="empty">No recordings yet.</div>'; return; }
+  const today = state.date;
+  box.innerHTML = d.days.map(day => {
+    const label = day.date === today ? "Today" : new Date(day.date + "T12:00").toLocaleDateString(undefined,
+      { weekday: "short", month: "short", day: "numeric" });
+    return `<div class="libday">${esc(label)}</div>` + day.segments.map(sg =>
+      `<button class="librow" onclick="playDay('${day.date}','${sg.segment}')"><span>${esc(NAMES[sg.segment] || sg.segment)}` +
+      `${sg.title ? " · " + esc(sg.title) : ""}</span><span>${sg.seconds ? fmt(sg.seconds) : ""}</span></button>`).join("");
+  }).join("");
+}
+async function vol(delta) {
+  state.volume = Math.max(0, Math.min(100, state.volume + delta));
+  if (await ctl("volume", { value: state.volume })) toast("Volume " + state.volume);
+}
+
+function fmt(s) { s = Math.max(0, Math.floor(s || 0)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+let seeking = false;
+async function poll() {
+  try {
+    const d = await (await fetch("/now-playing")).json();
+    const el = document.getElementById("np"), bar = document.getElementById("seek"), pp = document.getElementById("pp");
+    state.playing = !!(d.playing && d.entry); state.paused = !!d.paused;
+    pp.textContent = state.playing && !state.paused ? "❚❚" : "▶";
+    if (!state.playing) { el.textContent = "Not playing"; bar.disabled = true; bar.value = 0; return; }
+    const what = d.entry.kind === "segment" ? (NAMES[d.entry.label] || d.entry.label) : d.entry.kind;
+    const dur = d.duration_s || d.entry.seconds || 0;
+    state.duration = dur;
+    el.textContent = `${state.paused ? "❚❚" : "▶"} ${what} · ${fmt(d.position_s)} / ${fmt(dur)}` +
+      (d.date && d.date !== state.date ? ` · ${d.date}` : "");
+    bar.disabled = !dur;
+    if (!seeking && dur) bar.value = Math.round(1000 * (d.position_s || 0) / dur);
+  } catch (e) { /* offline for a moment: keep the last line */ }
+}
+(function wireSeek() {
+  const bar = document.getElementById("seek");
+  bar.addEventListener("input", () => { seeking = true; });
+  bar.addEventListener("change", async () => {
+    const to = (bar.value / 1000) * (state.duration || 0);
+    await ctl("seek", { to_s: Math.max(0, to) });
+    seeking = false; setTimeout(poll, 300);
+  });
+})();
+
+async function loadBrief() {
+  const d = await (await fetch("/brief")).json();
+  const box = document.getElementById("brief");
+  if (!d.draft) { box.innerHTML = ""; return; }
+  const diff = d.draft.diff.split("\n").filter(l => !l.startsWith("---") && !l.startsWith("+++")).map(l =>
+    l.startsWith("+") ? `<span class="add">${esc(l)}</span>` : l.startsWith("-") ? `<span class="del">${esc(l)}</span>` : esc(l)
+  ).join("\n");
+  box.innerHTML = `<div class="banner"><b>Brief update waiting</b> · v${d.current.version} → v${d.draft.version}
+    <details><summary>What changes</summary><pre>${diff}</pre></details>
+    <div class="row"><button class="ok" onclick="decide('approve')">Approve</button>
+    <button class="no" onclick="decide('reject')">Reject</button></div></div>`;
+}
+async function decide(action) {
+  const r = await fetch("/brief/" + action, { method: "POST" });
+  toast(r.ok ? (action === "approve" ? "Brief approved: used from tonight" : "Draft discarded") : "Couldn't save");
+  loadBrief();
+}
+
+load().then(loadLibrary); loadSpend().catch(() => {}); loadBrief(); poll(); setInterval(poll, 3000);
+
+// --- alarm: one alarm (time, weekdays, sound); every change saves at once ---
+const alarmEl = id => document.getElementById(id);
+const alarmDays = () => [...document.querySelectorAll("#alarm-days input")];
+function paintAlarm(a) {
+  alarmEl("alarm-enabled").checked = a.enabled; alarmEl("alarm-time").value = a.time; alarmEl("alarm-sound").value = a.sound;
+  alarmDays().forEach(d => { d.checked = a.days.includes(Number(d.value)); });
+  alarmEl("alarm-next").textContent = a.enabled && a.next_fire ? "next " + a.next_fire.replace("T", " ") : "off";
+}
+async function saveAlarm() {
+  const body = { enabled: alarmEl("alarm-enabled").checked, time: alarmEl("alarm-time").value,
+                 days: alarmDays().filter(d => d.checked).map(d => Number(d.value)), sound: alarmEl("alarm-sound").value };
+  const r = await fetch("/alarm", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (r.ok) { paintAlarm(await r.json()); toast("Alarm saved"); }
+  else { toast("Not saved: " + (await r.json().catch(() => ({}))).detail); fetch("/alarm").then(x => x.json()).then(paintAlarm); }
+}
+document.querySelectorAll("#alarm input, #alarm select").forEach(el => el.addEventListener("change", saveAlarm));
+fetch("/alarm").then(r => r.json()).then(paintAlarm).catch(() => {});
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Voice demo/script.json into demo/demo.mp3 (needs OPENROUTER_API_KEY in the secrets file; costs about a cent).
+#   bin/voice-demo [script.json] [out.mp3] [config.toml]
+set -euo pipefail
+cd "$(dirname "$0")/.."
+exec uv run python -m daily_brief.voice_demo "${1:-demo/script.json}" "${2:-demo/demo.mp3}" "${3:-config.toml}"

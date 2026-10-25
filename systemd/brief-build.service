@@ -1,0 +1,15 @@
+[Unit]
+Description=Daily Brief: hourly episode builder (collect, one episode, one Claude call, HeyGen voice)
+# No network-online.target ordering: it does nothing in a systemd user unit. A run that finds the network
+# or Claude down records why and exits; the next hourly run tries again.
+
+[Service]
+Type=oneshot
+# models are cached on disk; never let a hub lookup decide whether an episode gets built
+Environment=HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 HF_HUB_DISABLE_PROGRESS_BARS=1
+# Python buffers stdout when it is not a terminal; unbuffered keeps journal lines in stage order
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=@APP_DIR@
+ExecStart=@APP_DIR@/.venv/bin/python -m daily_brief.build @APP_DIR@/config.toml
+# one episode: a Whisper transcription plus a Claude call plus the voice; a run that overlaps the next hour just delays it
+TimeoutStartSec=5400

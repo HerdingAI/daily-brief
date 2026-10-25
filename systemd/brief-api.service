@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily Brief: phone page + API (rundown, feedback, player controls)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@APP_DIR@
+ExecStart=@APP_DIR@/.venv/bin/python -m daily_brief.api @APP_DIR@/config.toml
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

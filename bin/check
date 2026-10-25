@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Tests + lint with a REAL exit code (piping pytest through tail hides failures).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+uv run pytest -q -p no:warnings
+uv run ruff check .

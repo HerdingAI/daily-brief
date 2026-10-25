@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Install the systemd USER units for this checkout and enable the timers + API.
+#   bin/install-units            install, enable and start
+#   bin/install-units --dry-run  print what would be installed, touch nothing
+# The units in systemd/ use @APP_DIR@ as a placeholder for this checkout; it is filled in here.
+# Needs: `uv sync` done, config.toml present, and for always-on running `loginctl enable-linger $USER`.
+set -euo pipefail
+APP="$(cd "$(dirname "$0")/.." && pwd)"
+UNITS="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+DRY=0; [ "${1:-}" = "--dry-run" ] && DRY=1
+
+[ -f "$APP/config.toml" ] || { echo "install-units: copy config.example.toml to config.toml first" >&2; exit 1; }
+[ -x "$APP/.venv/bin/python" ] || { echo "install-units: run 'uv sync' first" >&2; exit 1; }
+
+for f in "$APP"/systemd/*.service "$APP"/systemd/*.timer; do
+  name="$(basename "$f")"
+  if [ "$DRY" = 1 ]; then echo "would install $UNITS/$name"; continue; fi
+  mkdir -p "$UNITS"
+  sed "s|@APP_DIR@|$APP|g" "$f" > "$UNITS/$name"
+  chmod 644 "$UNITS/$name"
+done
+[ "$DRY" = 1 ] && exit 0
+
+systemctl --user daemon-reload
+systemctl --user enable --now brief-build.timer brief-alarm.timer brief-api.service
+systemctl --user list-timers 'brief-*' --no-pager

@@ -1,0 +1,23 @@
+# runtime state and databases
+var/
+*.db
+*.db-wal
+*.db-shm
+# secrets
+secrets.env
+*.env
+.env
+.env.*
+# the real config (config.example.toml is the template)
+config.toml
+# generated audio; only the demo is published
+*.mp3
+*.wav
+!demo/demo.mp3
+# Python / tooling
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+samples/

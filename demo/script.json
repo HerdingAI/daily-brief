@@ -1,0 +1,23 @@
+{
+  "title": "The price on the label is not the price on the bill",
+  "why": "A short, original demo script that shows the two-host format: why the listed price of a text-to-speech service is not what you end up paying.",
+  "chapters": [
+    {"topic": "listed versus billed price", "why": "It explains why the cost of a voiced show has to be measured, not read off a pricing page.", "priority": "p1"}
+  ],
+  "so_what": "Before you pick a voice service, send your real workload through it and read the bill back.",
+  "turns": [
+    {"speaker": "A", "text": "Welcome to the demo. Today's question is a simple one. Why is the price of a text to speech service almost never the price you pay?"},
+    {"speaker": "B", "text": "Because a price page quotes you a rate per character, and a bill is made of requests. Those are not the same thing."},
+    {"speaker": "A", "text": "Say more. If a service charges sixty cents per million characters, then a million characters should cost sixty cents."},
+    {"speaker": "B", "text": "It should, if you send one giant request. But a two host show is mostly short turns. A turn might be a hundred and fifty characters."},
+    {"speaker": "A", "text": "So you make hundreds of tiny requests instead of one big one."},
+    {"speaker": "B", "text": "Right. And many services have a minimum charge per request. Think of a taxi that charges a flat pickup fee. A one block ride and a ten mile ride both pay it."},
+    {"speaker": "A", "text": "So for short turns, the pickup fee dominates, and the per character rate barely matters."},
+    {"speaker": "B", "text": "In our own test, one model listed at sixty two cents per million characters and billed about four dollars. Same words, six times the price, just because of the shape of the traffic."},
+    {"speaker": "A", "text": "That sounds like a trap for anyone budgeting from the pricing page."},
+    {"speaker": "B", "text": "It is. And there is a second trap. A cheap voice that speaks slowly makes a longer episode, so the listener pays in minutes instead of dollars."},
+    {"speaker": "A", "text": "So what should someone actually do?"},
+    {"speaker": "B", "text": "Send your real script through each candidate, the same way production will, and read the billed cost back for every request. Then divide by characters. That number is the only one you can plan around."},
+    {"speaker": "A", "text": "That is the whole lesson. Measure the bill, not the label. Thanks for listening to the demo."}
+  ]
+}

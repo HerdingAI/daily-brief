@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <link rel="self" href="http://www.youtube.com/feeds/videos.xml?channel_id=UCexamplechannel0000000"/>
+ <id>yt:channel:examplechannel0000000</id>
+ <yt:channelId>examplechannel0000000</yt:channelId>
+ <title>Example Dev Channel</title>
+ <link rel="alternate" href="https://www.youtube.com/channel/UCexamplechannel0000000"/>
+ <author>
+  <name>Example Dev Channel</name>
+  <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+ </author>
+ <published>2007-01-24T01:57:07+00:00</published>
+ <entry>
+  <id>yt:video:exampleVid1</id>
+  <yt:videoId>exampleVid1</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Getting the most out of a code assistant</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid1"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-25T00:11:51+00:00</published>
+  <updated>2026-09-25T00:11:51+00:00</updated>
+  <media:group>
+   <media:title>Getting the most out of a code assistant</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleShort</id>
+  <yt:videoId>exampleShort</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>A short clip</title>
+  <link rel="alternate" href="https://www.youtube.com/shorts/exampleShort"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-24T16:00:02+00:00</published>
+  <updated>2026-09-24T16:00:02+00:00</updated>
+  <media:group>
+   <media:title>A short clip</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid02</id>
+  <yt:videoId>exampleVid02</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 2</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid02"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-23T17:03:05+00:00</published>
+  <updated>2026-09-23T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 2</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid03</id>
+  <yt:videoId>exampleVid03</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 3</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid03"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-22T17:03:05+00:00</published>
+  <updated>2026-09-22T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 3</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid04</id>
+  <yt:videoId>exampleVid04</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 4</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid04"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-21T17:03:05+00:00</published>
+  <updated>2026-09-21T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 4</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid05</id>
+  <yt:videoId>exampleVid05</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 5</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid05"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-20T17:03:05+00:00</published>
+  <updated>2026-09-20T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 5</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid06</id>
+  <yt:videoId>exampleVid06</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 6</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid06"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-19T17:03:05+00:00</published>
+  <updated>2026-09-19T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 6</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid07</id>
+  <yt:videoId>exampleVid07</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 7</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid07"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-18T17:03:05+00:00</published>
+  <updated>2026-09-18T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 7</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid08</id>
+  <yt:videoId>exampleVid08</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 8</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid08"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-17T17:03:05+00:00</published>
+  <updated>2026-09-17T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 8</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid09</id>
+  <yt:videoId>exampleVid09</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 9</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid09"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-16T17:03:05+00:00</published>
+  <updated>2026-09-16T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 9</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid10</id>
+  <yt:videoId>exampleVid10</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 10</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid10"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-15T17:03:05+00:00</published>
+  <updated>2026-09-15T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 10</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid11</id>
+  <yt:videoId>exampleVid11</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 11</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid11"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-14T17:03:05+00:00</published>
+  <updated>2026-09-14T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 11</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid12</id>
+  <yt:videoId>exampleVid12</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 12</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid12"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-13T17:03:05+00:00</published>
+  <updated>2026-09-13T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 12</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid13</id>
+  <yt:videoId>exampleVid13</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 13</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid13"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-12T17:03:05+00:00</published>
+  <updated>2026-09-12T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 13</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+ <entry>
+  <id>yt:video:exampleVid14</id>
+  <yt:videoId>exampleVid14</yt:videoId>
+  <yt:channelId>UCexamplechannel0000000</yt:channelId>
+  <title>Example video number 14</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=exampleVid14"/>
+  <author>
+   <name>Example Dev Channel</name>
+   <uri>https://www.youtube.com/channel/UCexamplechannel0000000</uri>
+  </author>
+  <published>2026-09-11T17:03:05+00:00</published>
+  <updated>2026-09-11T17:03:05+00:00</updated>
+  <media:group>
+   <media:title>Example video number 14</media:title>
+   <media:description>Synthetic description for tests.</media:description>
+  </media:group>
+ </entry>
+</feed>

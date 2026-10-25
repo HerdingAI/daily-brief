@@ -1,0 +1,226 @@
+{
+ "segment_title": "An Example Segment About Measuring Small Experiments",
+ "estimated_minutes": 12,
+ "editor_note": "A synthetic rundown used only by the test-suite.",
+ "rundown": [
+  {
+   "position": 1,
+   "role": "headline",
+   "cluster_ids": [
+    "i1"
+   ],
+   "priority": "p1",
+   "scores": {
+    "relevance": 4,
+    "novelty": 3,
+    "convergence": 1,
+    "actionability": 4
+   },
+   "why_kept": "Synthetic reason 1.",
+   "angle": "Synthetic angle 1.",
+   "minutes": 2.5,
+   "topic": "example-topic-1"
+  },
+  {
+   "position": 2,
+   "role": "deep_dive",
+   "cluster_ids": [
+    "i2"
+   ],
+   "priority": "p1",
+   "scores": {
+    "relevance": 4,
+    "novelty": 3,
+    "convergence": 1,
+    "actionability": 4
+   },
+   "why_kept": "Synthetic reason 2.",
+   "angle": "Synthetic angle 2.",
+   "minutes": 2.5,
+   "topic": "example-topic-2"
+  },
+  {
+   "position": 3,
+   "role": "quick_hit",
+   "cluster_ids": [
+    "i3"
+   ],
+   "priority": "p1",
+   "scores": {
+    "relevance": 4,
+    "novelty": 3,
+    "convergence": 1,
+    "actionability": 4
+   },
+   "why_kept": "Synthetic reason 3.",
+   "angle": "Synthetic angle 3.",
+   "minutes": 2.5,
+   "topic": "example-topic-3"
+  },
+  {
+   "position": 4,
+   "role": "quick_hit",
+   "cluster_ids": [
+    "i4"
+   ],
+   "priority": "p1",
+   "scores": {
+    "relevance": 4,
+    "novelty": 3,
+    "convergence": 1,
+    "actionability": 4
+   },
+   "why_kept": "Synthetic reason 4.",
+   "angle": "Synthetic angle 4.",
+   "minutes": 2.5,
+   "topic": "example-topic-4"
+  },
+  {
+   "position": 5,
+   "role": "closer",
+   "cluster_ids": [
+    "i5"
+   ],
+   "priority": "p1",
+   "scores": {
+    "relevance": 4,
+    "novelty": 3,
+    "convergence": 1,
+    "actionability": 4
+   },
+   "why_kept": "Synthetic reason 5.",
+   "angle": "Synthetic angle 5.",
+   "minutes": 2.5,
+   "topic": "example-topic-5"
+  }
+ ],
+ "so_what": {
+  "text": "Try one small experiment this week.",
+  "ties_to": "p1",
+  "projects": [
+   "Example project one",
+   "Example project two"
+  ]
+ },
+ "cut": [
+  {
+   "cluster_ids": [
+    "i1"
+   ],
+   "reason": "low-specificity",
+   "note": "Synthetic note 1."
+  },
+  {
+   "cluster_ids": [
+    "i2"
+   ],
+   "reason": "budget",
+   "note": "Synthetic note 2."
+  },
+  {
+   "cluster_ids": [
+    "i3"
+   ],
+   "reason": "known",
+   "note": "Synthetic note 3."
+  },
+  {
+   "cluster_ids": [
+    "i4"
+   ],
+   "reason": "off-brief",
+   "note": "Synthetic note 4."
+  },
+  {
+   "cluster_ids": [
+    "i5"
+   ],
+   "reason": "low-specificity",
+   "note": "Synthetic note 5."
+  },
+  {
+   "cluster_ids": [
+    "i6"
+   ],
+   "reason": "budget",
+   "note": "Synthetic note 6."
+  },
+  {
+   "cluster_ids": [
+    "i7"
+   ],
+   "reason": "known",
+   "note": "Synthetic note 7."
+  },
+  {
+   "cluster_ids": [
+    "i8"
+   ],
+   "reason": "off-brief",
+   "note": "Synthetic note 8."
+  },
+  {
+   "cluster_ids": [
+    "i9"
+   ],
+   "reason": "low-specificity",
+   "note": "Synthetic note 9."
+  },
+  {
+   "cluster_ids": [
+    "i10"
+   ],
+   "reason": "budget",
+   "note": "Synthetic note 10."
+  },
+  {
+   "cluster_ids": [
+    "i11"
+   ],
+   "reason": "known",
+   "note": "Synthetic note 11."
+  },
+  {
+   "cluster_ids": [
+    "i12"
+   ],
+   "reason": "off-brief",
+   "note": "Synthetic note 12."
+  },
+  {
+   "cluster_ids": [
+    "i13"
+   ],
+   "reason": "low-specificity",
+   "note": "Synthetic note 13."
+  },
+  {
+   "cluster_ids": [
+    "i14"
+   ],
+   "reason": "budget",
+   "note": "Synthetic note 14."
+  },
+  {
+   "cluster_ids": [
+    "i15"
+   ],
+   "reason": "known",
+   "note": "Synthetic note 15."
+  },
+  {
+   "cluster_ids": [
+    "i16"
+   ],
+   "reason": "off-brief",
+   "note": "Synthetic note 16."
+  },
+  {
+   "cluster_ids": [
+    "i17"
+   ],
+   "reason": "known",
+   "note": "Synthetic note 17."
+  }
+ ]
+}

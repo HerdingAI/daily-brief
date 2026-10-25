@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Word error rate of a built episode against its script: bin/audio-qa [config.toml] <library item dir>
+# Exit 1 when over [qa] max_wer. On-demand; the build does not run it.
+set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
+cd "$(dirname "$0")/.."
+if [ "$#" -eq 1 ]; then set -- config.toml "$1"; fi
+exec uv run python -m daily_brief.audio_qa "$@"
