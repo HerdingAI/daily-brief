@@ -38,6 +38,8 @@ class Feed:
     title: str
     description: str
     items: int                       # newest assembled shows listed in /feed.xml
+    episodes_title: str              # channel title of /episodes.xml
+    episode_items: int               # newest ready episodes listed in /episodes.xml
     base_url: str                    # public URL of this API for enclosure links; "" = derive from the request
 
 
@@ -273,6 +275,8 @@ def load_config(path: str | Path) -> Config:
             title=_get(raw, "feed.title", str),
             description=_get(raw, "feed.description", str),
             items=_get(raw, "feed.items", int),
+            episodes_title=_get(raw, "feed.episodes_title", str),
+            episode_items=_get(raw, "feed.episode_items", int),
             base_url=_get(raw, "feed.base_url", str).rstrip("/"),
         ),
         brief=BriefCfg(
@@ -372,6 +376,8 @@ def load_config(path: str | Path) -> Config:
 def _validate(cfg: Config) -> None:
     if cfg.feed.items < 1:
         raise ConfigError("feed.items must be >= 1")
+    if cfg.feed.episode_items < 1:
+        raise ConfigError("feed.episode_items must be >= 1")
     if cfg.feed.base_url and not cfg.feed.base_url.startswith(("http://", "https://")):
         raise ConfigError("feed.base_url must be empty or start with http:// or https://")
     bad = [s for s in cfg.show.segments if s not in KNOWN_SEGMENTS]

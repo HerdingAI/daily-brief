@@ -17,6 +17,8 @@ title = "Daily Brief"
 description = "A morning show built from the podcasts and talks worth hearing, in two hosts' voices."
 items = 14                                                 # newest shows listed
 base_url = ""                                              # public URL of this API (enclosure links); empty = taken from the request
+episodes_title = "Daily Brief episodes"                    # /episodes.xml: every ready episode, as soon as it is built
+episode_items = 50                                         # newest episodes listed there
 
 [brief]
 path = "/app/brief/brief.md"   # the seed baked into the image; approved briefs live in <var_dir>/brief (persisted, writable)

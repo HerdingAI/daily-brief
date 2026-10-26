@@ -57,8 +57,9 @@ flowchart LR
    episodes are concatenated per segment (A, then B), up to `max_segment_minutes`, and joined into
    `var/show/<date>/show.mp3`. Episodes built later go to the next morning.
 8. **Serve and react.** The API serves `/latest.mp3`, `/shows/<date>.mp3` and `/feed.xml`. Subscribe to the feed in any
-   podcast app, or point home automation at `/latest.mp3`. The small page at `/` shows what is in the show and takes
-   feedback (more, skip, go deeper).
+   podcast app, or point home automation at `/latest.mp3`. Each episode is also published on its own the moment it is
+   built, in `/episodes.xml` (newest first, `/episodes/<item>.mp3`) and `/episodes/latest.json`. The small page at `/`
+   shows what is in the show and takes feedback (more, skip, go deeper).
 
 ## Design decisions
 
@@ -194,9 +195,23 @@ curl -s localhost:8765/health/show | python3 -m json.tool    # queue, last build
 curl -s localhost:8765/health/llm                             # is Claude logged in, was the token rejected
 curl -o today.mp3 localhost:8765/latest.mp3                   # today's show, or the newest one
 curl -s localhost:8765/feed.xml                               # the podcast feed
+curl -s localhost:8765/episodes.xml                           # every built episode, before the morning show
+curl -s localhost:8765/episodes/latest.json                   # the newest episode: id, title, mp3 url
 docker compose logs -f builder                                # the hourly runs
 docker compose --profile test run --rm test                   # the test suite in the image
 ```
+
+### Home Assistant and Music Assistant
+
+Daily Brief only publishes files; it never plays anything. Two ways to reach the episodes from a smart home:
+
+- **Music Assistant:** add a *Podcast RSS Feed* provider for `<base_url>/episodes.xml` (and one for `/feed.xml` if you
+  want the assembled morning show). The episodes then appear under Podcasts on every Music Assistant player, and in Home
+  Assistant's media browser. Music Assistant re-reads a feed at most hourly; to see a new episode sooner, call its
+  `music/sync` command when `/episodes/latest.json` changes.
+- **Home Assistant feedreader:** point a feedreader entry at `<base_url>/episodes.xml`. Each new episode fires an
+  `event.<name>` entity whose `link` is the episode's MP3 URL, so an automation can pass it to `media_player.play_media`.
+  Feedreader remembers entries it has seen, even across removing and re-adding the entry, and polls hourly by default.
 
 Without Docker you can still develop: `uv sync`, `bin/check` (tests and lint), and run the modules directly with a config
 whose paths point at your own directories.

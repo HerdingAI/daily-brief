@@ -536,3 +536,131 @@ def test_feed_ignores_days_without_a_file_and_does_not_need_the_archive(ondemand
     (d / "show.mp3").unlink()                                   # READY names a file that is gone
     archived_show(cfg.paths.archive_dir, "2026-09-20", ["A"])   # the archive is not consulted
     assert feed_of(c).find("channel").findall("item") == []
+
+
+# ---- individual episodes: /episodes.xml, /episodes/<id>.mp3, /episodes/latest.json -------------
+
+def episodes_of(c, **kw):
+    r = c.get("/episodes.xml", **kw)
+    assert r.status_code == 200 and r.headers["content-type"].startswith("application/rss+xml")
+    return ET.fromstring(r.content)
+
+
+def test_episodes_feed_is_empty_but_valid(lib):
+    cfg, c, _ = lib
+    ch = episodes_of(c).find("channel")
+    assert ch.findtext("title") == "Daily Brief episodes" == cfg.feed.episodes_title
+    assert ch.findtext("description") == cfg.feed.description and ch.findtext("language") == "en"
+    assert ch.findtext("link") == "http://testserver" and ch.findall("item") == []
+
+
+def test_episodes_feed_newest_first_and_only_playable(lib):
+    cfg, c, conn = lib
+    for i in (1, 2, 3):
+        add_episode(conn, cfg, i, "A" if i != 2 else "B", seconds=600.7)
+    add_episode(conn, cfg, 4, "A", status="skipped")
+    add_episode(conn, cfg, 5, "A", status="bad")
+    add_episode(conn, cfg, 6, "A")
+    (cfg.paths.var_dir / "library" / "6" / "episode.mp3").unlink()      # pruned: row outlives its file
+    items = episodes_of(c).find("channel").findall("item")
+    assert [i.findtext("guid") for i in items] == ["episode-3", "episode-2", "episode-1"]
+    top = items[0]
+    assert top.findtext("title") == "Episode 3" and top.findtext("category") == "A"
+    assert top.findtext("description") == "episode why 3\n\nso what 3"
+    assert top.find("guid").get("isPermaLink") == "false"
+    enc = top.find("enclosure")
+    assert enc.get("url") == "http://testserver/episodes/3.mp3" and enc.get("type") == "audio/mpeg"
+    assert enc.get("length") == str(len(b"ep3"))
+    assert top.findtext("link") == "http://testserver/episodes/3.mp3"  # feed readers (HA feedreader) expose <link>, not the enclosure
+    assert top.findtext(f"{ITUNES}duration") == "600"
+    assert top.findtext("pubDate") == "Sun, 25 Oct 2026 03:00:00 -0500"
+
+
+def test_episodes_feed_title_fallback_no_so_what_no_duration(lib):
+    cfg, c, conn = lib
+    add_episode(conn, cfg, 1, "A")
+    conn.execute("update episodes set title = null, so_what = null, seconds = null")
+    item = episodes_of(c).find("channel").find("item")
+    assert item.findtext("title") == "Episode 1" and item.findtext("description") == "episode why 1"
+    assert item.find(f"{ITUNES}duration") is None
+
+
+def test_episodes_feed_limit_and_base_url_come_from_config(tmp_path):
+    cfg = load_config(write_config(tmp_path, {"episode_items = 50": "episode_items = 2",
+                                              'base_url = ""': 'base_url = "https://brief.example/"',
+                                              'episodes_title = "Daily Brief episodes"': 'episodes_title = "Eps"'}))
+    conn = db.connect(cfg.paths.var_dir / "brief.db")
+    for i in (1, 2, 3):
+        add_episode(conn, cfg, i, "A")
+    c = TestClient(api.create_app(cfg, today=lambda: DATE))
+    ch = episodes_of(c).find("channel")
+    assert ch.findtext("title") == "Eps" and ch.findtext("link") == "https://brief.example"
+    items = ch.findall("item")
+    assert [i.findtext("guid") for i in items] == ["episode-3", "episode-2"]
+    assert items[0].find("enclosure").get("url") == "https://brief.example/episodes/3.mp3"
+
+
+def test_episodes_feed_base_url_derived_from_request(lib):
+    cfg, c, conn = lib
+    add_episode(conn, cfg, 1, "A")
+    item = episodes_of(c, headers={"host": "brief.lan:8765"}).find("channel").find("item")
+    assert item.find("enclosure").get("url") == "http://brief.lan:8765/episodes/1.mp3"
+
+
+def test_episode_config_rejects_zero_items(tmp_path):
+    from daily_brief.config import ConfigError
+    with pytest.raises(ConfigError, match="episode_items"):
+        load_config(write_config(tmp_path, {"episode_items = 50": "episode_items = 0"}))
+
+
+def test_episode_mp3_served_inline(lib):
+    cfg, c, conn = lib
+    add_episode(conn, cfg, 3, "A")
+    r = c.get("/episodes/3.mp3")
+    assert r.status_code == 200 and r.content == b"ep3" and r.headers["content-type"] == "audio/mpeg"
+    assert r.headers["content-disposition"] == 'inline; filename="daily-brief-episode-3.mp3"'
+
+
+def test_episode_mp3_404s(lib):
+    cfg, c, conn = lib
+    add_episode(conn, cfg, 1, "A", status="skipped")
+    add_episode(conn, cfg, 2, "A", status="bad")
+    add_episode(conn, cfg, 3, "A")
+    (cfg.paths.var_dir / "library" / "3" / "episode.mp3").unlink()
+    for item_id in (1, 2, 3, 99):          # skipped, bad, file gone, no such row
+        assert c.get(f"/episodes/{item_id}.mp3").status_code == 404
+    assert c.get("/episodes/abc.mp3").status_code == 422
+
+
+def test_episode_mp3_refuses_a_path_outside_the_library(lib, tmp_path):
+    cfg, c, conn = lib
+    add_episode(conn, cfg, 1, "A")
+    secret = tmp_path / "secret.mp3"
+    secret.write_bytes(b"nope")
+    conn.execute("update episodes set path = ?", (str(secret),))
+    assert c.get("/episodes/1.mp3").status_code == 404
+    conn.execute("update episodes set path = ?", (str(cfg.paths.var_dir / "library" / "1" / ".." / ".." / ".." / "secret.mp3"),))
+    assert c.get("/episodes/1.mp3").status_code == 404
+    assert episodes_of(c).find("channel").findall("item") == []      # nor is it listed
+
+
+def test_episode_latest_json_404_when_none(lib):
+    _, c, _ = lib
+    assert c.get("/episodes/latest.json").status_code == 404
+
+
+def test_episode_latest_json(lib):
+    cfg, c, conn = lib
+    add_episode(conn, cfg, 1, "A")
+    add_episode(conn, cfg, 2, "B", seconds=300.0)
+    add_episode(conn, cfg, 3, "A")
+    (cfg.paths.var_dir / "library" / "3" / "episode.mp3").unlink()      # newest row, but no file: skipped over
+    assert c.get("/episodes/latest.json").json() == {
+        "item_id": 2, "title": "Episode 2", "segment": "B", "why": "episode why 2", "seconds": 300.0,
+        "built_at": "2026-10-25T02:00:00-05:00", "url": "http://testserver/episodes/2.mp3"}
+
+
+def test_feed_xml_does_not_list_episodes(lib):
+    cfg, c, conn = lib
+    add_episode(conn, cfg, 1, "A")
+    assert feed_of(c).find("channel").findall("item") == []

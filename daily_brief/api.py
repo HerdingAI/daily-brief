@@ -296,14 +296,21 @@ def create_app(cfg: Config, today: Callable[[], str] | None = None) -> FastAPI:
             raise HTTPException(404, "no show has been assembled yet")
         return show_mp3(dates[0])
 
-    @app.get("/feed.xml")
-    def feed(request: Request):
-        base = cfg.feed.base_url or str(request.base_url).rstrip("/")
+    def base_of(request: Request) -> str:
+        return cfg.feed.base_url or str(request.base_url).rstrip("/")
+
+    def new_channel(title: str, base: str) -> tuple[ET.Element, ET.Element]:
         rss = ET.Element("rss", {"version": "2.0"})
         ch = ET.SubElement(rss, "channel")
-        for tag, text in (("title", cfg.feed.title), ("link", base), ("description", cfg.feed.description),
+        for tag, text in (("title", title), ("link", base), ("description", cfg.feed.description),
                           ("language", "en")):
             ET.SubElement(ch, tag).text = text
+        return rss, ch
+
+    @app.get("/feed.xml")
+    def feed(request: Request):
+        base = base_of(request)
+        rss, ch = new_channel(cfg.feed.title, base)
         for date in assembled_dates()[:cfg.feed.items]:
             p = show_file(date)
             r = ready(date)
@@ -326,6 +333,73 @@ def create_app(cfg: Config, today: Callable[[], str] | None = None) -> FastAPI:
                 ET.SubElement(item, f"{{{ITUNES}}}duration").text = str(int(r["show_seconds"]))
         body = ET.tostring(rss, encoding="utf-8", xml_declaration=True)
         return Response(body, media_type="application/rss+xml")
+
+    # ---- individual episodes as their own podcast (Home Assistant / Music Assistant subscribe to /episodes.xml) ----
+    library_dir = var / "library"
+
+    def episode_file(path: str | None) -> Path | None:
+        """The episode's MP3 if it exists and lives under var/library (the DB path is trusted, but checked anyway)."""
+        if not path:
+            return None
+        try:
+            p = Path(path).resolve()
+            p.relative_to(library_dir.resolve())
+        except (OSError, ValueError):
+            return None
+        return p if p.is_file() else None
+
+    def playable_episodes() -> list[tuple[dict, Path]]:
+        """Ready episodes whose file is still there (upkeep prunes aired ones), newest built_at first."""
+        out = []
+        for r in _rows(conn(), "select item_id, segment, title, why, so_what, path, seconds, built_at from episodes "
+                               "where status = 'ready'"):
+            p = episode_file(r["path"])
+            if p is not None:
+                out.append((r, p))
+        out.sort(key=lambda x: x[0]["built_at"] and dt.datetime.fromisoformat(x[0]["built_at"]).timestamp(),
+                 reverse=True)
+        return out
+
+    @app.get("/episodes.xml")
+    def episodes_feed(request: Request):
+        base = base_of(request)
+        rss, ch = new_channel(cfg.feed.episodes_title, base)
+        for r, p in playable_episodes()[:cfg.feed.episode_items]:
+            item = ET.SubElement(ch, "item")
+            ET.SubElement(item, "title").text = r["title"] or f"Episode {r['item_id']}"
+            ET.SubElement(item, "link").text = f"{base}/episodes/{r['item_id']}.mp3"  # what feed readers (HA) expose
+            desc = "\n\n".join(t for t in (r["why"], r["so_what"]) if t)
+            if desc:
+                ET.SubElement(item, "description").text = desc
+            ET.SubElement(item, "category").text = r["segment"]
+            ET.SubElement(item, "enclosure", {"url": f"{base}/episodes/{r['item_id']}.mp3",
+                                              "length": str(p.stat().st_size), "type": "audio/mpeg"})
+            ET.SubElement(item, "guid", {"isPermaLink": "false"}).text = f"episode-{r['item_id']}"
+            when = dt.datetime.fromisoformat(r["built_at"])
+            ET.SubElement(item, "pubDate").text = email.utils.format_datetime(
+                when if when.tzinfo else when.astimezone())
+            if r["seconds"] is not None:
+                ET.SubElement(item, f"{{{ITUNES}}}duration").text = str(int(r["seconds"]))
+        return Response(ET.tostring(rss, encoding="utf-8", xml_declaration=True), media_type="application/rss+xml")
+
+    @app.get("/episodes/latest.json")
+    def episode_latest(request: Request):
+        eps = playable_episodes()
+        if not eps:
+            raise HTTPException(404, "no episode has been built yet")
+        r, _ = eps[0]
+        return {"item_id": r["item_id"], "title": r["title"] or f"Episode {r['item_id']}", "segment": r["segment"],
+                "why": r["why"], "seconds": r["seconds"], "built_at": r["built_at"],
+                "url": f"{base_of(request)}/episodes/{r['item_id']}.mp3"}
+
+    @app.get("/episodes/{item_id}.mp3")
+    def episode_mp3(item_id: int):
+        row = conn().execute("select path from episodes where item_id = ? and status = 'ready'", (item_id,)).fetchone()
+        p = episode_file(row[0]) if row else None
+        if p is None:
+            raise HTTPException(404, f"no episode {item_id}")
+        return FileResponse(p, media_type="audio/mpeg", filename=f"daily-brief-episode-{item_id}.mp3",
+                            content_disposition_type="inline")
 
     @app.get("/export")
     def export(since: str):
